@@ -1,0 +1,13 @@
+# Encode (public web version) on Netlify.
+# The site is plain static files in /site; the only server code is the edge function in netlify/edge-functions.
+# Set GEMINI_API_KEY in Netlify → Site configuration → Environment variables (never put it in these files).
+[build]
+  publish = "site"
+  command = ""
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), geolocation=()"

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Encode</title>
+  <meta property="og:title" content="Encode: active-learning study tutor">
+  <meta name="description" content="Your personal active-learning tutor: add lecture material, see it visually, and lock it in with recall.">
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%234f46e5'/%3E%3Cpath d='M20 22h24M20 32h18M20 42h24' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/"><span class="logo">E</span><span>Encode</span></a>
+    <div class="top-stats" id="topStats"></div>
+    <button class="icon-btn" data-act="settings" title="Settings" aria-label="Settings">⚙︎</button>
+  </header>
+  <div id="banner"></div>
+  <main id="view" class="wrap"></main>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+  <script src="sample.js"></script>
+  <script src="public-api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
