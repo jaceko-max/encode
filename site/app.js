@@ -388,15 +388,31 @@ window.addEventListener('hashchange', () => { window.scrollTo(0, 0); render(); }
 // Re-drawing the page you're on keeps your place: the old height is held while new content
 // (concept map, pictures) settles, and the scroll position is put back. Moving to a new page starts at the top.
 let lastRenderKey = '';
+const ANCHOR_SEL = '.card, .section, .tabs-bar';
+function pickAnchor(view) {
+  const line = 140; // just under the pinned header + tabs
+  const els = [...view.querySelectorAll(ANCHOR_SEL)];
+  for (let i = 0; i < els.length; i++) { const r = els[i].getBoundingClientRect(); if (r.bottom > line && r.height) return { i, id: els[i].id, top: r.top }; }
+  return null;
+}
+function findAnchor(view, a) { return (a.id && document.getElementById(a.id)) || view.querySelectorAll(ANCHOR_SEL)[a.i] || null; }
 function render() {
   const key = location.hash; const same = key === lastRenderKey; lastRenderKey = key;
-  const view = $('#view'); const y = window.scrollY;
-  if (same && view) { view.style.minHeight = view.offsetHeight + 'px'; clearTimeout(UI.holdT); }
+  const view = $('#view');
+  if (!same || !view) return renderPage();
+  const y = window.scrollY; const anchor = pickAnchor(view);
+  view.style.minHeight = view.offsetHeight + 'px'; clearTimeout(UI.holdT); UI.anchorStop?.();
   try { renderPage(); } finally {
-    if (same && view) {
-      if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
-      UI.holdT = setTimeout(() => { view.style.minHeight = ''; }, 2500);
-    }
+    const fix = () => { const el = anchor && findAnchor(view, anchor); if (!el) return; const d = el.getBoundingClientRect().top - anchor.top; if (Math.abs(d) > 1) window.scrollBy(0, d); };
+    if (anchor) fix(); else if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+    // keep the card steady while pictures/maps above it finish loading, until you scroll yourself
+    let live = true; const ro = 'ResizeObserver' in window ? new ResizeObserver(() => live && fix()) : null; ro?.observe(view);
+    const onLoad = () => live && fix(); view.addEventListener('load', onLoad, true);
+    const stop = () => { if (!live) return; live = false; ro?.disconnect(); view.removeEventListener('load', onLoad, true); ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.removeEventListener(ev, stop)); };
+    ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.addEventListener(ev, stop, { passive: true }));
+    [30, 120, 300, 700, 1400].forEach((ms) => setTimeout(() => live && fix(), ms)); // maps and pictures that settle without a load event
+    UI.anchorStop = stop;
+    UI.holdT = setTimeout(() => { stop(); view.style.minHeight = ''; }, 2500);
   }
 }
 function renderPage() {
@@ -1360,7 +1376,7 @@ const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + 
 ACT.illustrate = async (el) => {
   const nb = curNb(); const c = nb.digest.concepts.find((x) => x.id === el.dataset.cid); const style = el.dataset.style; const key = `${c.id}:${style}`;
   if (!S.status.claude && !S.status.gemini) { toast('Illustrations need the AI tutor — see Settings', 'err'); return openSettings(); }
-  (UI.illBusy ||= {})[key] = true; render(); $(`#concept-${c.id}`)?.scrollIntoView({ block: 'nearest' });
+  (UI.illBusy ||= {})[key] = true; render();
   try {
     const r = await api('/api/illustrate', { ...c, style, sources: style === 'diagram' ? aiSources(nb) : [] });
     if (r.kind === 'svg' && !r.svg) throw new Error('The drawing came back empty. Try again.');
@@ -1368,7 +1384,7 @@ ACT.illustrate = async (el) => {
     if (r.note) toast(r.note);
     await gainXP(3, 'visual');
   } catch (e) { aiError(e); }
-  delete UI.illBusy[key]; render(); $(`#concept-${c.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  delete UI.illBusy[key]; render();
 };
 ACT['zoom-ill'] = (el) => {
   const nb = curNb(); const v = nb.illustrations[el.dataset.key];
