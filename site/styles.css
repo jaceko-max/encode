@@ -470,3 +470,7 @@ html .path a.next, html.has-photo .path a.next { color: var(--text); background:
 .brand-name { background: linear-gradient(90deg, #4f7dff, #3dd6f5); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .bg-layer.grid-floor::after { background: radial-gradient(55% 45% at 50% 55%, rgba(56, 140, 255, .24), rgba(34, 211, 238, .08) 55%, transparent 78%); }
 @media (max-width: 520px) { .logo-img { width: 30px; height: 30px; } }
+
+/* suggested next step: a small glowing dot on its tab */
+.next-dot { width: 7px; height: 7px; border-radius: 50%; background: #3dd6f5; box-shadow: 0 0 0 3px rgba(61, 214, 245, .18), 0 0 10px rgba(61, 214, 245, .8); flex: none; }
+.nb-head + .tabs { margin-top: 16px; }

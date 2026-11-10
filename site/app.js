@@ -512,8 +512,7 @@ function renderNotebook(nb, tab, arg) {
       <div class="small muted">${esc(nb.course || '')}${nb.course ? ' · ' : ''}${pct(nbMastery(nb))}% mastery</div></div>
       <button class="btn sm ghost" data-act="del-nb" data-id="${nb.id}">🗑 Delete notebook</button>
     </div>
-    <nav class="path" aria-label="Study path">${steps.map((s, i) => `<a href="#/nb/${nb.id}/${s.tab}" class="${s.done ? 'done' : s === next ? 'next' : ''}"><span class="n">${s.done ? '✓' : i + 1}</span>${s.label}</a>`).join('')}</nav>
-    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}</a>`).join('')}</nav>
+    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav>
     <div id="tab"></div>`;
   $('#nbTitleEdit').addEventListener('change', async (e) => { nb.title = e.target.value.trim() || 'Untitled notebook'; await save(nb); });
   const needsKit = ['pretest', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'].includes(tab) && !nb.digest;
