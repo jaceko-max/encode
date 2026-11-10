@@ -327,7 +327,9 @@ const okPhoto = (u) => /^https:\/\/(upload|thumb)\.wikimedia\.org\//.test(String
 const cssUrl = (u) => `url(${String(u).replace(/["'()\\\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})`;
 function findBg(id) { return BGS.find((x) => x.id === id) || (LOOK.custom && LOOK.custom.id === id && okPhoto(LOOK.custom.url) ? LOOK.custom : null); }
 if (LOOK.bg !== 'none' && !findBg(LOOK.bg)) LOOK.bg = 'grid';
-const thumbUrl = (b) => b.url.replace('/1920px-', '/500px-');
+const thumbUrl = (b) => b.thumb || b.url.replace('/1920px-', '/500px-');
+// small preview of a Commons file: …/commons/a/ab/Name.jpg → …/commons/thumb/a/ab/Name.jpg/500px-Name.jpg
+const commonsThumb = (orig) => { const m = String(orig).match(/^(https:\/\/upload\.wikimedia\.org\/wikipedia\/commons)\/([0-9a-f]\/[0-9a-f]{2})\/([^/?#]+)$/); return m ? `${m[1]}/thumb/${m[2]}/${m[3]}/500px-${m[3]}` : orig; };
 function applyLook() {
   const root = document.documentElement;
   root.dataset.theme = 'dark';
@@ -361,19 +363,21 @@ function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify({ bg: 
 const htmlText = (h) => new DOMParser().parseFromString(String(h || ''), 'text/html').body.textContent.replace(/\s+/g, ' ').trim();
 async function commonsSearch(q, cat) {
   const p = new URLSearchParams({ action: 'query', format: 'json', origin: '*', generator: 'search', gsrnamespace: '6', gsrlimit: '40',
-    gsrsearch: `${q} incategory:"${cat}" filetype:bitmap`, prop: 'imageinfo', iiprop: 'url|size|extmetadata', iiurlwidth: '1920',
+    gsrsearch: `${q}${cat ? ` incategory:"${cat}"` : ''} filetype:bitmap`, prop: 'imageinfo', iiprop: 'url|size|extmetadata', iiurlwidth: '1920',
     iiextmetadatafilter: 'LicenseShortName|Artist' });
   const r = await fetch('https://commons.wikimedia.org/w/api.php?' + p);
   if (!r.ok) throw new Error('commons ' + r.status);
   const d = await r.json();
   return Object.values(d.query?.pages || {}).sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((pg) => {
     const ii = pg.imageinfo?.[0];
-    if (!ii || ii.width < 1920 || ii.width < ii.height * 1.25) return null; // big + landscape only
+    if (!ii || Math.max(ii.width, ii.height) < 1000) return null; // any shape, just not tiny
     const url = String(ii.thumburl || '').split('?')[0];
-    if (!okPhoto(url) || !url.includes('/1920px-')) return null;
+    if (!okPhoto(url)) return null;
+    const orig = String(ii.url || '').split('?')[0];
+    const thumb = url.includes('/1920px-') ? url.replace('/1920px-', '/500px-') : (ii.width > 500 ? commonsThumb(orig) : url);
     const md = ii.extmetadata || {};
     const name = String(pg.title || '').replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
-    return { id: 'c' + pg.pageid, name, url, page: String(ii.descriptionurl || ''), by: htmlText(md.Artist?.value).slice(0, 60) || 'Unknown',
+    return { id: 'c' + pg.pageid, name, url, thumb, page: String(ii.descriptionurl || ''), by: htmlText(md.Artist?.value).slice(0, 60) || 'Unknown',
       license: htmlText(md.LicenseShortName?.value) || 'see source', pos: '50% 50%' };
   }).filter(Boolean);
 }
@@ -381,6 +385,9 @@ async function searchBackgrounds(q) {
   let out = await commonsSearch(q, 'Featured_pictures_on_Wikimedia_Commons');
   if (out.length < 6) {
     try { const more = await commonsSearch(q, 'Quality_images'); out = [...out, ...more.filter((m) => !out.some((o) => o.id === m.id))]; } catch { /* keep what we have */ }
+  }
+  if (out.length < 6) { // still thin: search all of Wikimedia Commons
+    try { const more = await commonsSearch(q, ''); out = [...out, ...more.filter((m) => !out.some((o) => o.id === m.id))]; } catch { /* keep what we have */ }
   }
   return out.slice(0, 12);
 }
@@ -427,7 +434,7 @@ ACT['bg-search'] = async () => {
   R.busy = true; R.err = ''; refreshLook();
   try {
     R.results = await searchBackgrounds(q);
-    if (!R.results.length) R.err = `No big landscape photos found for “${q}”. Try a simpler word like ocean, forest, city or space.`;
+    if (!R.results.length) R.err = `No pictures found for “${q}”. Try a simpler word like ocean, forest, city or space.`;
   } catch { R.results = []; R.err = 'Couldn’t reach Wikimedia right now. Check your connection and try again.'; }
   R.busy = false; refreshLook();
 };
