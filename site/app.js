@@ -367,7 +367,7 @@ function renderHome() {
 function nbCard(nb) {
   const due = dueCards(nb).length; const step = nextStep(nb);
   return `<div class="card nb-card" data-act="open-nb" data-id="${nb.id}">
-    <div class="row between"><span class="tag accent">${esc(nb.course || 'Lecture')}</span>${due ? `<span class="tag warn">${due} due</span>` : ''}</div>
+    <div class="row between"><span class="tag accent">${esc(nb.course || 'Lecture')}</span><span class="row" style="gap:6px">${due ? `<span class="tag warn">${due} due</span>` : ''}<button class="nb-del" data-act="del-nb" data-id="${nb.id}" title="Delete this notebook" aria-label="Delete ${esc(nb.title)}">🗑</button></span></div>
     <h3>${esc(nb.title)}</h3>
     <div class="meta"><span>📄 ${nb.sources.length} source${nb.sources.length === 1 ? '' : 's'}</span><span>🧠 ${nb.cards.length} cards</span><span>🎯 ${pct(nbMastery(nb))}% mastery</span></div>
     <div class="meter"><i style="width:${pct(nbMastery(nb))}%"></i></div>
@@ -426,7 +426,7 @@ function renderNotebook(nb, tab, arg) {
       <a href="#/" class="small">← All notebooks</a>
       <div><input class="nb-title-input" id="nbTitleEdit" value="${esc(nb.title)}" size="${Math.max(12, nb.title.length + 2)}" aria-label="Notebook title"></div>
       <div class="small muted">${esc(nb.course || '')}${nb.course ? ' · ' : ''}${pct(nbMastery(nb))}% mastery</div></div>
-      <button class="btn sm ghost" data-act="del-nb">Delete</button>
+      <button class="btn sm ghost" data-act="del-nb" data-id="${nb.id}">🗑 Delete notebook</button>
     </div>
     <nav class="path" aria-label="Study path">${steps.map((s, i) => `<a href="#/nb/${nb.id}/${s.tab}" class="${s.done ? 'done' : s === next ? 'next' : ''}"><span class="n">${s.done ? '✓' : i + 1}</span>${s.label}</a>`).join('')}</nav>
     <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${l}${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}</a>`).join('')}</nav>
@@ -442,17 +442,19 @@ function renderNeedKit(nb, el) {
     <p class="muted">${nb.sources.length ? 'You have material — turn it into visuals, questions and a concept map.' : 'Add your lecture slides, PDFs, notes, photos or links.'}</p>
     <a class="btn primary" href="#/nb/${nb.id}/sources">${nb.sources.length ? 'Build the kit' : 'Add material'}</a></div>`;
 }
-ACT['del-nb'] = async () => {
-  const nb = getNb(route().id);
-  modal(`<h2>Delete “${esc(nb.title)}”?</h2><p class="muted">This removes its sources, cards and progress from this browser. It can’t be undone (unless you exported a backup).</p>
+ACT['del-nb'] = async (el) => {
+  const nb = getNb(el?.dataset?.id || route().id); if (!nb) return;
+  UI.delNb = nb.id;
+  modal(`<h2>Delete “${esc(nb.title)}”?</h2><p class="muted">Its sources, cards and progress are removed from this browser. You’ll get an <b>Undo</b> button for a few seconds; after that it can’t be brought back (unless you exported a backup).</p>
     <div class="row" style="justify-content:flex-end"><button class="btn" data-act="close-modal">Cancel</button><button class="btn bad" data-act="del-nb-yes">Delete</button></div>`);
 };
 ACT['del-nb-yes'] = async () => {
-  const id = route().id; const nb = getNb(id);
-  try { await DB.del('notebooks', id); } catch { return; } // moved to the trash folder, restorable
-  for (const s of nb?.sources || []) VIS.delete(s.id);
-  S.notebooks = S.notebooks.filter((n) => n.id !== id); closeModal(); go('#/'); pushSummary();
-  toast(`Deleted “${nb?.title || 'notebook'}”`, '', { label: 'Undo', fn: async () => {
+  const id = UI.delNb; const nb = getNb(id); if (!nb) return closeModal();
+  try { await DB.del('notebooks', id); } catch { return; } // kept in the trash, restorable
+  for (const s of nb.sources || []) VIS.delete(s.id);
+  S.notebooks = S.notebooks.filter((n) => n.id !== id); closeModal(); pushSummary();
+  if (route().view === 'home' || !location.hash || location.hash === '#/') render(); else go('#/');
+  toast(`Deleted “${nb.title}”`, '', { label: 'Undo', fn: async () => {
     try { const r = await DB.call('/api/nb/restore', { id }); S.notebooks.push(r.nb); pushSummary(); render(); toast('Restored ✓'); } catch { /* toast shown */ }
   } });
 };
