@@ -306,20 +306,82 @@ const dueCards = (nb) => nb.cards.filter((c) => c.srs.due <= Date.now());
 const aiSources = (nb) => nb.sources.map((s) => ({ name: s.name, kind: s.kind, text: s.text }));
 
 // Spaced repetition (SM-2 style). q: 5 perfect … 0 blank.
-function newSrs() { return { due: 0, interval: 0, ease: 2.5, reps: 0, lapses: 0 }; }
-function schedule(card, verdict, conf = null) {
-  let q = verdict === 'correct' ? 5 : verdict === 'partial' ? 3 : 1;
-  if (verdict === 'correct' && conf === 'guess') q = 3; // a lucky guess isn't learned yet
-  else if (verdict === 'correct' && conf === 'unsure') q = 4;
-  const s = card.srs;
-  if (q < 3) { s.reps = 0; s.lapses++; s.interval = 0; s.due = Date.now() + 10 * 60e3; }
-  else {
-    s.reps++;
-    s.interval = s.reps === 1 ? (q === 3 ? 1 : 2) : s.reps === 2 ? (q === 3 ? 3 : 6) : Math.round(s.interval * s.ease * (q === 3 ? 0.8 : 1));
-    s.due = Date.now() + s.interval * DAY;
+function newSrs() { return { due: 0, interval: 0, ease: 2.5, reps: 0, lapses: 0, state: 'new' }; }
+const MAX_GAP_DAYS = 40;
+// ───────────── Spaced repetition: Anki's scheduler (SM-2 with learning steps, default settings) ─────────────
+const ANKI = {
+  learn: [1, 10],        // learning steps (minutes) for new cards
+  relearn: [10],         // relearning steps (minutes) after you forget a learned card
+  gradIvl: 1,            // days after the last learning step (Good)
+  easyIvl: 4,            // days when you press Easy on a new card
+  startEase: 2.5, minEase: 1.3,
+  hardMult: 1.2, easyBonus: 1.3, newIvlMult: 0, minIvl: 1,
+  maxIvl: MAX_GAP_DAYS,  // Anki's "maximum interval", set for a semester
+};
+const MIN = 60e3;
+const BTNS = ['again', 'hard', 'good', 'easy'];
+const BTN_LABEL = { again: 'Again', hard: 'Hard', good: 'Good', easy: 'Easy' };
+const BTN_V = { again: 'incorrect', hard: 'partial', good: 'correct', easy: 'correct' };
+function srsState(card) {
+  const s = card.srs; if (s.state) return s.state;
+  if (s.reps > 0) return 'review';
+  return card.history?.length ? 'learn' : 'new';
+}
+function fuzzDays(ivl) { // Anki spreads reviews a little so cards don't bunch up on one day
+  if (ivl < 2.5) return ivl;
+  const r = Math.max(1, Math.round(ivl * (ivl < 7 ? 0.15 : ivl < 20 ? 0.1 : 0.05)));
+  return ivl + Math.floor(Math.random() * (2 * r + 1)) - r;
+}
+/** What pressing `btn` would do to this card. Pure: used for the button previews and for scheduling. */
+function ankiNext(card, btn, now = Date.now(), fuzz = false) {
+  const s = { ease: ANKI.startEase, lapses: 0, reps: 0, interval: 0, ...card.srs }; let st = srsState(card);
+  if (st === 'new') { st = 'learn'; s.step = 0; }
+  const cap = (d) => Math.max(ANKI.minIvl, Math.min(ANKI.maxIvl, Math.round(d)));
+  const toReview = (days) => { const d = fuzz ? cap(fuzzDays(days)) : cap(days); return { ...s, state: 'review', step: null, interval: d, reps: (s.reps || 0) + 1, due: now + d * DAY, last: now }; };
+  if (st === 'learn' || st === 'relearn') {
+    const steps = st === 'learn' ? ANKI.learn : ANKI.relearn;
+    const i = Math.min(s.step ?? 0, steps.length - 1);
+    const stay = (mins, step) => ({ ...s, state: st, step, interval: 0, due: now + mins * MIN, last: now });
+    if (btn === 'again') return stay(steps[0], 0);
+    if (btn === 'hard') return stay(i === 0 && steps.length > 1 ? (steps[0] + steps[1]) / 2 : i === 0 ? Math.min(steps[0] * 1.5, steps[0] + 1440) : steps[i], i);
+    if (btn === 'good') return i + 1 < steps.length ? stay(steps[i + 1], i + 1) : toReview(st === 'learn' ? ANKI.gradIvl : (s.lapseIvl || ANKI.minIvl));
+    return toReview(st === 'learn' ? ANKI.easyIvl : (s.lapseIvl || ANKI.minIvl) + 1); // easy
   }
-  s.ease = Math.max(1.3, s.ease + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
-  card.history.push({ t: Date.now(), v: verdict, c: conf });
+  // review card
+  const ivl = Math.max(1, s.interval || 1);
+  const late = Math.max(0, (now - (s.due || now)) / DAY);
+  const early = (s.due || 0) > now;
+  const elapsed = s.last ? Math.max(1, (now - s.last) / DAY) : ivl;
+  if (btn === 'again') {
+    return { ...s, state: 'relearn', step: 0, lapses: (s.lapses || 0) + 1, ease: Math.max(ANKI.minEase, s.ease - 0.2),
+      lapseIvl: Math.max(ANKI.minIvl, Math.round(ivl * ANKI.newIvlMult)), interval: 0, due: now + ANKI.relearn[0] * MIN, last: now };
+  }
+  const base = early ? Math.max(ivl, elapsed) : ivl; // reviewing early (cramming) doesn't inflate the gap
+  const hard = Math.max(ivl + 1, base * ANKI.hardMult);
+  const good = Math.max(hard + 1, early ? Math.max(ivl, elapsed * s.ease) : (ivl + late / 2) * s.ease);
+  const easy = Math.max(good + 1, early ? Math.max(ivl, elapsed * s.ease * ANKI.easyBonus) : (ivl + late) * s.ease * ANKI.easyBonus);
+  if (btn === 'hard') return { ...toReview(hard), ease: Math.max(ANKI.minEase, s.ease - 0.15) };
+  if (btn === 'good') return toReview(good);
+  return { ...toReview(easy), ease: s.ease + 0.15 };
+}
+function schedule(card, btn, conf = null) {
+  if (!BTNS.includes(btn)) btn = { correct: 'good', partial: 'hard', incorrect: 'again' }[btn] || 'again'; // old callers
+  card.srs = ankiNext(card, btn, Date.now(), true);
+  card.history.push({ t: Date.now(), v: BTN_V[btn], b: btn, c: conf });
+}
+function fmtIvl(ms) {
+  const m = ms / MIN;
+  if (m < 60) return `${Math.max(1, Math.round(m))}m`;
+  if (m < 1440) return `${Math.round(m / 60)}h`;
+  const d = m / 1440; if (d < 60) return `${Math.round(d)}d`;
+  return `${(d / 30).toFixed(1)}mo`;
+}
+// The AI's grade (and how sure you were) suggests a button; you decide, like in Anki.
+function suggestBtn(R) {
+  const v = R.result?.verdict; if (!v) return null;
+  if (v === 'incorrect') return 'again';
+  if (v === 'partial' || R.conf === 'guess') return 'hard';
+  return 'good';
 }
 
 // ───────────────────────── API ─────────────────────────
@@ -669,7 +731,9 @@ function renderHome() {
   const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
   const avgM = nbs.filter((n) => n.digest).map(nbMastery);
   const weak = nbs.flatMap((nb) => weakConcepts(nb, 6).map((w) => ({ ...w, nb }))).sort((a, b) => a.m - b.m).slice(0, 6);
-  const week = [...Array(7)].map((_, i) => { const d = new Date(Date.now() - (6 - i) * DAY); return { k: dayKey(d), l: d.toLocaleDateString('en-US', { weekday: 'narrow' }) }; });
+  // this calendar week, Sunday → Saturday (days still ahead are shown faded)
+  const sun = new Date(); sun.setHours(12, 0, 0, 0); sun.setDate(sun.getDate() - sun.getDay());
+  const week = [...Array(7)].map((_, i) => { const d = new Date(sun); d.setDate(sun.getDate() + i); return { k: dayKey(d), l: d.toLocaleDateString('en-US', { weekday: 'narrow' }), full: d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }), future: dayKey(d) > dayKey() }; });
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -702,7 +766,7 @@ function renderHome() {
         <div class="stat"><b>${due}</b><span>cards due</span></div>
         <div class="stat"><b>${avgM.length ? pct(avgM.reduce((a, b) => a + b, 0) / avgM.length) + '%' : '—'}</b><span>avg mastery</span></div>
       </div>
-      <div class="week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''}" title="${d.k}: ${S.meta.days[d.k] || 0} XP"><i></i>${d.l}</div>`).join('')}</div>
+      <div class="week" aria-label="This week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''} ${d.future ? 'future' : ''}" title="${d.full}${d.future ? '' : `: ${S.meta.days[d.k] || 0} XP`}"><i></i>${d.l}</div>`).join('')}</div>
     </div>
   </section>
 
@@ -1484,7 +1548,7 @@ function recallSession(el) {
     <div class="progress-line"><i style="width:${pct(R.i / R.queue.length)}%"></i></div>
     <div class="card">
       <div class="row between"><span class="row" style="gap:6px"><span class="tag accent">${card.kind === 'picture' ? '🖼️ Picture' : esc(CARD_KIND[card.kind] || card.kind)}</span>${R.scope.startsWith('course:') ? `<span class="tag">${esc(nb.title)}</span>` : ''}</span>
-        <span class="small muted">${R.i + 1} / ${R.queue.length}${Object.keys(R.requeued || {}).length ? ` (incl. ${Object.keys(R.requeued).length} retry)` : ''} · ${esc(conceptName(nb, card.concept_id))}</span></div>
+        <span class="small muted">${R.i + 1} / ${R.queue.length}${Object.values(R.requeued || {}).reduce((x, y) => x + y, 0) ? ` (incl. ${Object.values(R.requeued).reduce((x, y) => x + y, 0)} coming back)` : ''} · ${esc(conceptName(nb, card.concept_id))}</span></div>
       ${pic.length ? `<div style="margin-top:10px">${shotStrip('rc', pic)}</div>` : card.image ? '<div class="shot-empty" style="margin-top:10px"><span class="spinner"></span> Loading picture…</div>' : ''}
       <div class="q-text">${tx(card.question)}</div>
       ${!res ? `<textarea id="ans" placeholder="Type your answer from memory…${TOUCH ? '' : ' (⌘/Ctrl + Enter to check)'}">${esc(R.draft || '')}</textarea>
@@ -1498,11 +1562,8 @@ function recallSession(el) {
         ${res.verdict ? `<div class="verdict ${res.verdict}"><h3>${{ correct: '✅ Correct', partial: '🟡 Partly right', incorrect: '❌ Not quite' }[res.verdict]}</h3>
           ${res.feedback ? `<div>${esc(res.feedback)}</div>` : ''}${res.missing?.length ? `<div class="small" style="margin-top:6px"><b>Missing:</b> ${res.missing.map(esc).join('; ')}</div>` : ''}</div>` : ''}
         <div class="answer-box"><div class="small muted">Model answer</div>${esc(card.answer)}</div>
-        ${res.verdict ? `<div class="row" style="margin-top:12px"><span class="small muted">Disagree?</span>
-          ${['correct', 'partial', 'incorrect'].filter((v) => v !== res.verdict).map((v) => `<button class="btn sm ghost" data-act="rc-override" data-v="${v}">Mark ${v}</button>`).join('')}
-          <span class="spacer"></span><button class="btn primary" data-act="rc-next">Next →</button></div>`
-        : `<div class="small muted" style="margin-top:12px">How did you do?</div><div class="row" style="margin-top:6px">
-          <button class="btn bad" data-act="rc-self" data-v="incorrect">Missed it</button><button class="btn warn" data-act="rc-self" data-v="partial">Partly</button><button class="btn good" data-act="rc-self" data-v="correct">Got it</button></div>`}`}
+        <div class="small muted" style="margin-top:14px">${res.verdict ? 'How well did you know it? (suggested from the grading)' : 'How well did you know it?'}</div>
+        <div class="anki-row">${BTNS.map((b, k) => { const sug = suggestBtn(R) === b; return `<button class="anki-btn ${b} ${sug ? 'suggest' : ''}" data-act="rc-anki" data-b="${b}" title="Key ${k + 1}"><b>${BTN_LABEL[b]}</b><span>${fmtIvl(ankiNext(card, b).due - Date.now())}</span></button>`; }).join('')}</div>`}
     </div>
     <div class="row" style="justify-content:center;margin-top:12px"><button class="btn sm ghost" data-act="rc-quit">End session</button></div></div>`;
   const ta = $('#ans');
@@ -1559,8 +1620,18 @@ function poolFor(nb, mode, focus) {
 }
 function beginSession(scope, focus, items, limit) {
   if (!items.length) { toast('No cards in that set yet'); return false; }
-  // interleave: shuffle so concepts (and lectures) alternate
-  const queue = [...items].sort(() => Math.random() - 0.5).slice(0, limit).map(({ nb, card }) => ({ nb: nb.id, card: card.id }));
+  // Pick what matters most first: confident mistakes, then cards you've missed, then the most overdue.
+  // Then shuffle the chosen cards so concepts (and lectures) alternate.
+  const rank = ({ card }) => {
+    const last = card.history[card.history.length - 1];
+    if (last && last.v === 'incorrect' && last.c === 'sure') return 0;
+    if ((last && last.v !== 'correct') || card.srs.lapses > 0) return 1;
+    return 2;
+  };
+  const picked = [...items].map((x) => ({ x, r: rank(x), due: x.card.srs.due, k: Math.random() }))
+    .sort((a, b) => a.r - b.r || a.due - b.due || a.k - b.k).slice(0, limit).map((o) => o.x);
+  for (let i = picked.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [picked[i], picked[j]] = [picked[j], picked[i]]; }
+  const queue = picked.map(({ nb, card }) => ({ nb: nb.id, card: card.id }));
   UI.recall = { scope, focus, queue, i: 0, result: null, draft: '', conf: null, tally: { correct: 0, partial: 0, incorrect: 0 }, xp: 0, confMistakes: 0, luckyGuesses: 0 };
   render();
   return true;
@@ -1572,7 +1643,11 @@ ACT['rc-conf'] = (el) => { UI.recall.conf = UI.recall.conf === el.dataset.c ? nu
 // Clear-cut answers are graded on the spot (saves AI): near-identical to the key, or covering its key words.
 function quickGrade(response, answer) {
   if (!norm(response)) return null;
-  if (similar(response, answer) >= 0.9 || coverage(response, answer) >= 0.85) {
+  // Longer answers carry relationships (which limb does what, what causes what) that word-matching can't check,
+  // e.g. swapping "ascending" and "descending" keeps every word. Those always go to the AI grader.
+  const exact = norm(response) === norm(answer);
+  const short = words(answer).length <= 3 && words(response).length <= 6;
+  if (exact || (short && (similar(response, answer) >= 0.9 || coverage(response, answer) >= 0.85))) {
     return { verdict: 'correct', score: 1, feedback: 'Matches the key points ✓ (checked instantly)', missing: [], instant: true };
   }
   return null;
@@ -1592,6 +1667,12 @@ ACT['rc-check'] = async () => {
   render();
 };
 ACT['rc-idk'] = () => { const R = UI.recall; R.draft = ''; R.conf = null; R.result = { verdict: 'incorrect', feedback: 'No worries. Read the answer, then say it to yourself once. It’ll come back soon.' }; render(); };
+ACT['rc-anki'] = (el) => { const R = UI.recall; if (!R?.result) return; R.btn = el.dataset.b; ACT['rc-next'](); };
+document.addEventListener('keydown', (e) => { // Anki keys: 1–4 to rate, Space/Enter takes the suggestion
+  const R = UI.recall; if (!R?.result || R.advancing || e.target.closest?.('textarea, input') || route().tab !== 'recall') return;
+  const k = { 1: 'again', 2: 'hard', 3: 'good', 4: 'easy' }[e.key] || ((e.key === ' ' || e.key === 'Enter') && suggestBtn(R));
+  if (k) { e.preventDefault(); R.btn = k; ACT['rc-next'](); }
+});
 ACT['rc-self'] = (el) => {
   const R = UI.recall; R.result.verdict = el.dataset.v;
   // Stop on a confident mistake so the warning is seen; otherwise move straight on.
@@ -1600,25 +1681,27 @@ ACT['rc-self'] = (el) => {
 };
 ACT['rc-override'] = (el) => { UI.recall.result.verdict = el.dataset.v; UI.recall.result.feedback = 'Marked by you.'; UI.recall.result.missing = []; render(); };
 ACT['rc-next'] = async () => {
-  const R = UI.recall; if (!R || R.advancing || !R.result?.verdict) return;
+  const R = UI.recall; if (!R || R.advancing || !(R.btn || suggestBtn(R))) return;
   R.advancing = true;
   try { await recallApply(R); } finally { R.advancing = false; }
   render();
 };
 async function recallApply(R) {
-  const { nb, card } = recallItem(R); const v = R.result.verdict;
-  schedule(card, v, R.conf); record(nb, card.concept_id, v === 'correct' ? (R.conf === 'guess' ? 0.6 : 1) : v === 'partial' ? 0.5 : 0);
+  const { nb, card } = recallItem(R); const btn = R.btn || suggestBtn(R); const v = BTN_V[btn];
+  schedule(card, btn, R.conf); record(nb, card.concept_id, { again: 0, hard: 0.5, good: R.conf === 'guess' ? 0.6 : 1, easy: 1 }[btn]);
   nb.progress.reviews++; R.tally[v]++;
   if (v === 'incorrect' && R.conf === 'sure') R.confMistakes++;
   if (v === 'correct' && R.conf === 'guess') R.luckyGuesses++;
-  if (v === 'incorrect' && !R.requeued?.[card.id]) { (R.requeued ||= {})[card.id] = 1; R.queue.push({ nb: nb.id, card: card.id }); } // see it again this session
+  // due again within a few minutes: bring it back a few cards later in this session (at most twice)
+  const n = (R.requeued ||= {})[card.id] || 0;
+  if (card.srs.due - Date.now() <= 20 * 60e3 && n < 2) { R.requeued[card.id] = n + 1; R.queue.splice(Math.min(R.queue.length, R.i + 1 + (v === 'incorrect' ? 3 : 5)), 0, { nb: nb.id, card: card.id }); }
   const xp = v === 'correct' ? 10 : v === 'partial' ? 5 : 2; R.xp += xp;
   await save(nb); await gainXP(xp);
-  R.i++; R.result = null; R.draft = ''; R.conf = null;
+  R.i++; R.result = null; R.draft = ''; R.conf = null; R.btn = null;
 }
 ACT['rc-quit'] = async () => {
   const R = UI.recall; if (!R || R.advancing) return;
-  if (R.result?.verdict) { R.advancing = true; try { await recallApply(R); } finally { R.advancing = false; } } // keep the answer that's on screen
+  if (R.result && (R.btn || suggestBtn(R))) { R.advancing = true; try { await recallApply(R); } finally { R.advancing = false; } } // keep the answer that's on screen
   R.queue = R.queue.slice(0, R.i); render();
 };
 function recallDone(el) {

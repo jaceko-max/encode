@@ -694,3 +694,16 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .tabs-bar.stuck { background: color-mix(in srgb, var(--bg) 96%, transparent); box-shadow: 0 1px 0 var(--border), 0 8px 18px rgba(0, 0, 0, .35); }
 .tabs-bar.stuck .tabs { margin: 8px 0; }
 @media (hover: none), (max-width: 760px) { .topbar { background: color-mix(in srgb, var(--bg) 99%, transparent); } }
+.week .d.future { opacity: .45; }
+.week .d.future i { background: transparent; border: 1px dashed var(--border); }
+.week .d.today i { box-shadow: 0 0 0 2px var(--accent); }
+
+/* Anki rating buttons */
+.anki-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+.anki-btn { display: grid; gap: 2px; justify-items: center; padding: 10px 6px; min-height: 56px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); font: inherit; cursor: pointer; transition: transform .08s, border-color .15s, background .15s; }
+.anki-btn b { font-size: .95rem; } .anki-btn span { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.anki-btn:active { transform: translateY(1px); }
+.anki-btn.again b { color: var(--bad); } .anki-btn.hard b { color: var(--warn); } .anki-btn.good b { color: var(--good); } .anki-btn.easy b { color: var(--accent); }
+.anki-btn.suggest { border-color: currentColor; box-shadow: 0 0 0 2px var(--accent) inset; background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
+.anki-btn.suggest span { color: var(--text); }
