@@ -543,6 +543,9 @@ For each topic, write the YouTube search that will surface a great teaching vide
     catch (e) { return json({ error: e.message || String(e), code: e.code }, e.code === 'no_key' ? 401 : 422); }
   };
 
+  // Chrome/Edge: ask the browser to keep this site's saved notebooks (no prompt; just a request).
+  try { navigator.storage?.persist?.(); } catch { /* not supported */ }
+
   // Settings helpers app.js uses in the web version.
   window.EncodeWeb = {
     attempts,

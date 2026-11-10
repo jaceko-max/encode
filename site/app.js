@@ -190,7 +190,7 @@ async function gainXP(n, label) {
   await saveMeta();
   toast(`+${n} XP${label ? ' · ' + label : ''}`, 'xp');
   if (wasFirstToday && streak() > 1) setTimeout(() => toast(`🔥 ${streak()}-day streak!`), 600);
-  if (level() > before) setTimeout(() => toast(`⭐ Level ${level()} reached!`, 'xp'), 900);
+  if (level() > before) setTimeout(() => { toast(`⭐ Level ${level()} reached!`, 'xp'); confetti(); }, 900);
   renderTop();
 }
 
@@ -455,6 +455,35 @@ ACT['review-all'] = () => {
   if (nb) go(`#/nb/${nb.id}/recall`);
 };
 
+// ───────────────────────── line icons (tabs) ─────────────────────────
+const ICON_PATHS = {
+  sources: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  pretest: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  learn: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  videos: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
+  recall: '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  teach: '<path d="M3 4h18M5 4v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4M12 16v4M8 20h8"/>',
+  tutor: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/>',
+  exam: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="m9 13 2 2 4-4"/>',
+  progress: '<path d="M3 20h18M7 16v-5M12 16V6M17 16v-8"/>',
+};
+const icon = (k) => ICON_PATHS[k] ? `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[k]}</svg>` : '';
+
+// Small celebration for a strong session or a new level (skipped when "reduce motion" is on).
+function confetti() {
+  try { if (matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch { /* old browser */ }
+  const box = document.createElement('div'); box.className = 'confetti'; box.setAttribute('aria-hidden', 'true');
+  const colors = ['#8b5cf6', '#22d3ee', '#ec4899', '#facc15', '#4ade80'];
+  for (let i = 0; i < 70; i++) {
+    const p = document.createElement('i');
+    p.style.left = `${Math.random() * 100}vw`; p.style.background = colors[i % colors.length];
+    p.style.animationDelay = `${Math.random() * 0.35}s`; p.style.animationDuration = `${1.4 + Math.random() * 0.8}s`;
+    p.style.setProperty('--dx', `${Math.round(Math.random() * 200 - 100)}px`); p.style.setProperty('--r', `${Math.round(Math.random() * 900 - 450)}deg`);
+    box.appendChild(p);
+  }
+  document.body.appendChild(box); setTimeout(() => box.remove(), 2600);
+}
+
 // ═════════════════════════ NOTEBOOK SHELL ═════════════════════════
 const TABS = [
   ['sources', '📄 Sources'], ['pretest', '🤔 Pretest'], ['learn', '🖼️ Learn'], ['videos', '🎬 Videos'], ['recall', '🧠 Recall'],
@@ -484,7 +513,7 @@ function renderNotebook(nb, tab, arg) {
       <button class="btn sm ghost" data-act="del-nb" data-id="${nb.id}">🗑 Delete notebook</button>
     </div>
     <nav class="path" aria-label="Study path">${steps.map((s, i) => `<a href="#/nb/${nb.id}/${s.tab}" class="${s.done ? 'done' : s === next ? 'next' : ''}"><span class="n">${s.done ? '✓' : i + 1}</span>${s.label}</a>`).join('')}</nav>
-    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${l}${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}</a>`).join('')}</nav>
+    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}</a>`).join('')}</nav>
     <div id="tab"></div>`;
   $('#nbTitleEdit').addEventListener('change', async (e) => { nb.title = e.target.value.trim() || 'Untitled notebook'; await save(nb); });
   const needsKit = ['pretest', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'].includes(tab) && !nb.digest;
@@ -1236,6 +1265,7 @@ ACT['rc-next'] = async () => {
 ACT['rc-quit'] = () => { const R = UI.recall; R.queue = R.queue.slice(0, R.i); render(); };
 function recallDone(el) {
   const R = UI.recall; const t = R.tally; const total = t.correct + t.partial + t.incorrect;
+  if (total >= 3 && t.correct / total >= 0.8 && !R.cheered) { R.cheered = true; setTimeout(confetti, 150); }
   const nbs = [...new Set(R.queue.map((q) => q.nb))].map(getNb).filter(Boolean);
   const next = nbs.flatMap((nb) => nb.cards).filter((c) => c.srs.due > Date.now()).sort((a, b) => a.srs.due - b.srs.due)[0];
   const single = R.scope.startsWith('nb:') ? nbs[0] : null;
