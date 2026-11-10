@@ -474,3 +474,10 @@ html .path a.next, html.has-photo .path a.next { color: var(--text); background:
 /* suggested next step: a small glowing dot on its tab */
 .next-dot { width: 7px; height: 7px; border-radius: 50%; background: #3dd6f5; box-shadow: 0 0 0 3px rgba(61, 214, 245, .18), 0 0 10px rgba(61, 214, 245, .8); flex: none; }
 .nb-head + .tabs { margin-top: 16px; }
+
+/* donation note */
+.card.donate { display: flex; align-items: center; gap: 14px; margin-top: 14px; padding: 14px 18px; flex-wrap: wrap;
+  background: linear-gradient(135deg, color-mix(in srgb, #3dd6f5 10%, var(--surface)), color-mix(in srgb, #4f7dff 12%, var(--surface))); }
+.donate-ico { font-size: 1.6rem; flex: none; }
+.donate-to { color: var(--text); word-break: break-all; }
+@media (max-width: 520px) { .card.donate .btn { width: 100%; } }

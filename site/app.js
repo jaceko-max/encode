@@ -373,6 +373,17 @@ ACT['look-strength'] = (el) => { LOOK.strength = el.dataset.v; saveLook(); refre
 applyLook();
 
 // ═════════════════════════ HOME ═════════════════════════
+// Donation note on the home page (email assembled at runtime so simple scrapers don't pick it up).
+const DONATE_TO = ['kojace263', 'gmail.com'].join('@');
+function donateCard() {
+  return `<div class="card donate"><span class="donate-ico">☕</span>
+    <div class="spacer"><b>Help keep 3nc0de free</b><div class="small muted">The AI costs real money to run. If 3nc0de helps you study, please donate $1 on Zelle to <b class="donate-to">${DONATE_TO}</b>. <span style="white-space:nowrap">Thank you! – Ko</span></div></div>
+    <button class="btn sm" data-act="copy-donate">Copy email</button></div>`;
+}
+ACT['copy-donate'] = async () => {
+  try { await navigator.clipboard.writeText(DONATE_TO); toast('Email copied. Paste it in Zelle 💜'); }
+  catch { toast(DONATE_TO); }
+};
 function renderHome() {
   const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
   const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
@@ -404,6 +415,7 @@ function renderHome() {
       <div class="week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''}" title="${d.k}: ${S.meta.days[d.k] || 0} XP"><i></i>${d.l}</div>`).join('')}</div>
     </div>
   </section>
+  ${donateCard()}
 
   ${(() => {
     const courses = [...new Set(nbs.filter((n) => n.digest).map((n) => n.course || 'Other'))].map((c) => ({ c, list: courseNotebooks(c) })).filter((x) => x.list.length > 1);
