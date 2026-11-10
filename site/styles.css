@@ -707,3 +707,28 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .anki-btn.again b { color: var(--bad); } .anki-btn.hard b { color: var(--warn); } .anki-btn.good b { color: var(--good); } .anki-btn.easy b { color: var(--accent); }
 .anki-btn.suggest { border-color: currentColor; box-shadow: 0 0 0 2px var(--accent) inset; background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
 .anki-btn.suggest span { color: var(--text); }
+
+/* ═════════════ leaderboard ═════════════ */
+.lb-tabs { align-self: flex-start; }
+.lb-list { display: grid; gap: 6px; }
+.lb-row { display: grid; grid-template-columns: 40px 26px 1fr auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid transparent; }
+.lb-row.top { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); }
+.lb-row.me { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.lb-place { font: 700 1.05rem "Chakra Petch", var(--font); text-align: center; color: var(--muted); }
+.lb-row.top .lb-place { font-size: 1.35rem; }
+.lb-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-xp { font: 700 1rem "Chakra Petch", var(--font); font-variant-numeric: tabular-nums; }
+.lb-xp span { font-size: .75rem; color: var(--muted); }
+.lb-prize { display: flex; gap: 14px; align-items: center; background: linear-gradient(135deg, color-mix(in srgb, #f5c542 14%, var(--surface)), var(--surface)); border-color: color-mix(in srgb, #f5c542 35%, var(--border)); }
+.lb-prize-ico { font-size: 2rem; flex: none; }
+.lb-join { gap: 12px; }
+.hall-row { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.hall-row:last-child { border-bottom: 0; }
+.hall-pl { display: inline-block; margin-right: 14px; font-weight: 600; }
+#homeLb:empty { display: none; }
+/* prize nameplate */
+.plate.plate-gold { border: 2px solid transparent; background: linear-gradient(160deg, rgba(245, 197, 66, .16), var(--surface) 60%) padding-box, linear-gradient(120deg, #fff1b8, #f5c542, #b8860b, #f5c542) border-box;
+  box-shadow: 0 0 30px rgba(245, 197, 66, .3); }
+.plate.plate-gold::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 40%, rgba(255, 241, 184, .16) 50%, transparent 60%); transform: translateX(-100%); animation: plate-shine 5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .plate.plate-gold::after { animation: none; display: none; } }
+.lb-row:has(.lb-x) { grid-template-columns: 40px 26px 1fr auto auto; }

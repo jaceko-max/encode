@@ -57,6 +57,11 @@ Netlify Drop (drag a zip) can't run the edge function, so deploy from GitHub:
    3. Add it on Netlify as `SERPER_API_KEY`, then redeploy.
    Without it, background search uses free Wikimedia photos plus a button that opens Google Images.
 
+8. **Leaderboard** (built in, no sign-up needed).
+   - It stores scores in Netlify's built-in storage (Netlify Blobs). `package.json` makes Netlify install the small helper it needs, so upload `package.json` along with `site` and `netlify`.
+   - Optional: to remove a name, add `LB_ADMIN_KEY` on Netlify (any password you choose), redeploy, then open `https://<your site>/#/leaderboard/admin` and tap ✕ next to a name.
+   - It resets every Sunday at midnight (New York time). The week's #1 unlocks the Weekly Champion title and gold nameplate.
+
 **Updating later:** upload the changed files to the same GitHub repo. Netlify redeploys on its own.
 
 ## Notes from testing (Nov 9, 2026, free key)

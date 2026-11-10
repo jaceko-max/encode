@@ -5,6 +5,7 @@
 //   POST /edge/gemini?model=…  -> streams Gemini's answer (server-sent events) back to the browser
 //   GET  /edge/fetch?url=…     -> reads a public web page / YouTube oEmbed for "add a link" and the video check
 //   GET  /edge/youtube?q=…     -> optional real YouTube search (needs YOUTUBE_API_KEY)
+//   (leaderboard: see leaderboard.js, path /edge/lb)
 //   GET  /edge/images?q=…      -> optional Google Images results for backgrounds (needs SERPER_API_KEY from serper.dev)
 // The key: a visitor's own key (x-user-key header) if they added one in Settings, else GEMINI_API_KEY
 // from Netlify's environment variables. It's never sent to the browser.
@@ -141,4 +142,5 @@ export default async (request) => {
   return json({ error: 'Not found' }, 404);
 };
 
-export const config = { path: '/edge/*' };
+// /edge/lb is handled by leaderboard.js (kept separate so the AI relay never depends on storage)
+export const config = { path: '/edge/*', excludedPath: ['/edge/lb'] };

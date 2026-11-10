@@ -1,0 +1,8 @@
+{
+  "name": "3nc0de",
+  "private": true,
+  "description": "3nc0de by Ko: static site + Netlify edge functions",
+  "dependencies": {
+    "@netlify/blobs": "11.1.4"
+  }
+}

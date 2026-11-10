@@ -225,7 +225,13 @@ const TITLES = [
 ];
 const PLATES = [{ id: 'basic', name: 'Basic', at: 0, style: 'basic' },
   ...RANKS.map((r, ri) => ({ id: r.id, name: `${r.name} nameplate`, ri, at: r.top ? 24 : ri * 3 + 2, style: r.top ? 'prism' : ri >= 6 ? 'shine' : ri >= 3 ? 'glow' : 'line' }))];
-const owned = (item) => tierAt(S.meta.xp) >= item.at;
+// Weekly-prize items: owned once you've finished a week at #1 on the leaderboard.
+const WON = () => (S.meta.lbWins || []).some((w) => w.place === 1);
+TITLES.push({ id: 'champion', name: 'Weekly Champion', at: 999, special: true });
+PLATES.push({ id: 'champion', name: 'Champion nameplate', at: 999, special: true, style: 'gold', c: '#f5c542' });
+const owned = (item) => (item.special ? WON() : tierAt(S.meta.xp) >= item.at);
+const lockText = (item) => (item.special ? '🔒 Win a week' : `🔒 ${esc(tierLabel(item.at))}`);
+const plateColor = (p) => p.c || (p.ri !== undefined ? RANKS[p.ri].c : 'var(--border)');
 function unlocksAt(i) {
   if (!i) return [];
   return [...THEMES.filter((t) => t.at === i).map((t) => `${t.name} theme`), ...TITLES.filter((t) => t.at === i).map((t) => `title “${t.name}”`),
@@ -280,6 +286,7 @@ async function gainXP(n, label) {
   if (tierAt(S.meta.xp) > before) { const now = tierAt(S.meta.xp); setTimeout(() => rankUp(now), 900); }
   renderTop();
   if (route().view === 'home' || route().view === 'profile') render(); // keep the rank tile / profile current
+  lbSync();
 }
 
 // Concept mastery (fed by every graded attempt in every mode)
@@ -442,6 +449,7 @@ function route() {
   if (p[0] === 'nb' && p[1]) return { view: 'nb', id: p[1], tab: p[2] || '', arg: p[3] || '' };
   if (p[0] === 'course' && p[1]) return { view: 'course', course: p[1] };
   if (p[0] === 'profile') return { view: 'profile' };
+  if (p[0] === 'leaderboard') return { view: 'leaderboard', admin: p[1] === 'admin' };
   return { view: 'home' };
 }
 const go = (h) => { if (location.hash === h) render(); else location.hash = h; };
@@ -487,6 +495,7 @@ function renderPage() {
   }
   if (r.view === 'course') return renderCourse(r.course);
   if (r.view === 'profile') return renderProfile();
+  if (r.view === 'leaderboard') return renderLeaderboard();
   renderHome();
 }
 
@@ -726,7 +735,7 @@ function startClock() {
   UI.clockT = setTimeout(() => { tick(); UI.clockI = setInterval(tick, 1000); }, 1000 - (Date.now() % 1000)); // line up with the real second
 }
 function renderHome() {
-  startClock();
+  startClock(); setTimeout(homeLbCard, 0);
   const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
   const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
   const avgM = nbs.filter((n) => n.digest).map(nbMastery);
@@ -783,6 +792,7 @@ function renderHome() {
       <div class="card empty"><div class="big">📚</div><h3>No notebooks yet</h3>
       <p class="muted" style="margin:0">One notebook per lecture or topic. Tap <b>＋ New notebook</b> above to start, or try the sample first.</p></div>`}
   </section>
+  ${S.status.public ? '<section class="section" id="homeLb"></section>' : ''}
   ${nbs.some((n) => n.digest) ? donateCard() : ''}
 
   ${weak.length ? `<section class="section"><h2>🎯 Weak spots</h2><p class="muted small">Concepts you’ve missed most. Drilling these is the fastest way to raise your score.</p>
@@ -2133,14 +2143,13 @@ const XP_RULES = [['Recall answer: right / partly / tried', '+10 / +5 / +2'], ['
 function renderProfile() {
   const P = prof(); const rk = rankInfo(); const plate = myPlate(); const title = myTitle();
   let nextU = null; for (let i = rk.i + 1; i < TIERS.length; i++) { const u = unlocksAt(i); if (u.length) { nextU = { i, u }; break; } }
-  const lockNote = (at) => `🔒 ${esc(tierLabel(at))}`;
   $('#view').innerHTML = `
   <a href="#/" class="small">← Home</a>
-  <section class="card profile-head plate plate-${plate.style}" style="--pc:${plate.ri !== undefined ? RANKS[plate.ri].c : 'var(--border)'}">
+  <section class="card profile-head plate plate-${plate.style}" style="--pc:${plateColor(plate)}">
     <div class="emb-big">${emblem(rk.i, 96)}</div>
     <div class="spacer stack" style="gap:6px;min-width:0">
       <input class="name-input" id="profName" maxlength="24" placeholder="Tap to add your name" value="${esc(P.name)}" aria-label="Your name" autocomplete="nickname">
-      <div class="p-title">${esc(title.name)}</div>
+      <div class="p-title">${WON() ? '👑 ' : ''}${esc(title.name)}</div>
       <div class="p-rank"><b style="color:${rk.r.top ? 'var(--accent)' : rk.r.c}">${esc(rk.label)}</b> · ${S.meta.xp.toLocaleString()} XP</div>
       <div class="meter rr"><i style="width:${rk.next ? pct(rk.into / rk.need) : 100}%"></i></div>
       <div class="small muted">${rk.next ? `${rk.into} / ${rk.need} XP to <b>${esc(rk.nextLabel)}</b>` : 'You reached the top rank. Legendary. 💎'}</div>
@@ -2149,12 +2158,18 @@ function renderProfile() {
   </section>
   <section class="card stack"><h2>Customize</h2>
     <div class="small muted">Theme (buttons, tabs and glow)</div>
-    <div class="swatches">${THEMES.map((t) => `<button type="button" class="swatch ${myTheme().id === t.id ? 'on' : ''} ${owned(t) ? '' : 'locked'}" data-act="prof-theme" data-v="${t.id}" style="--sw:${t.prism ? PRISM_GRAD : `linear-gradient(135deg, ${t.g1}, ${t.g2})`}"><i></i><span>${owned(t) ? esc(t.name) : lockNote(t.at)}</span></button>`).join('')}</div>
+    <div class="swatches">${THEMES.map((t) => `<button type="button" class="swatch ${myTheme().id === t.id ? 'on' : ''} ${owned(t) ? '' : 'locked'}" data-act="prof-theme" data-v="${t.id}" style="--sw:${t.prism ? PRISM_GRAD : `linear-gradient(135deg, ${t.g1}, ${t.g2})`}"><i></i><span>${owned(t) ? esc(t.name) : lockText(t)}</span></button>`).join('')}</div>
     <div class="small muted">Title</div>
-    <div class="chips">${TITLES.map((t) => `<button type="button" class="${title.id === t.id ? 'on' : ''} ${owned(t) ? '' : 'locked'}" data-act="prof-title" data-v="${t.id}">${owned(t) ? esc(t.name) : `${lockNote(t.at)} · ${esc(t.name)}`}</button>`).join('')}</div>
+    <div class="chips">${TITLES.map((t) => `<button type="button" class="${title.id === t.id ? 'on' : ''} ${owned(t) ? '' : 'locked'}" data-act="prof-title" data-v="${t.id}">${owned(t) ? esc(t.name) : `${lockText(t)} · ${esc(t.name)}`}</button>`).join('')}</div>
     <div class="small muted">Nameplate</div>
-    <div class="plates">${PLATES.map((p) => `<button type="button" class="plate-opt plate plate-${p.style} ${plate.id === p.id ? 'on' : ''} ${owned(p) ? '' : 'locked'}" data-act="prof-plate" data-v="${p.id}" style="--pc:${p.ri !== undefined ? RANKS[p.ri].c : 'var(--border)'}">${owned(p) ? esc(p.name.replace(' nameplate', '')) : lockNote(p.at)}</button>`).join('')}</div>
+    <div class="plates">${PLATES.map((p) => `<button type="button" class="plate-opt plate plate-${p.style} ${plate.id === p.id ? 'on' : ''} ${owned(p) ? '' : 'locked'}" data-act="prof-plate" data-v="${p.id}" style="--pc:${plateColor(p)}">${owned(p) ? esc(p.name.replace(' nameplate', '')) : lockText(p)}</button>`).join('')}</div>
   </section>
+  ${S.status.public ? `<section class="card stack lb-prof"><h2>🏆 Leaderboard</h2>
+    ${S.meta.lbJoined ? `<p class="small muted" style="margin:0">You’re on the board as <b>${esc(P.name || '…')}</b>. Only your display name, rank and XP are shown.</p>
+      <div class="row"><a class="btn primary" href="#/leaderboard">See the leaderboard</a><button class="btn ghost" data-act="lb-leave">Leave</button></div>`
+    : `<p class="small muted" style="margin:0">Compete with everyone on 3nc0de. It resets every Sunday, and the week’s #1 wins the 👑 Weekly Champion title and a gold nameplate. Only your display name, rank and XP are shown.</p>
+      <div class="row"><button class="btn primary" data-act="lb-join">Join the leaderboard</button><a class="btn ghost" href="#/leaderboard">Just look</a></div>`}
+  </section>` : ''}
   <section class="card stack"><h2>Rank road</h2>
     <p class="small muted" style="margin:0">Every rank has 3 tiers. Tier 1 unlocks a theme, tier 2 a title, tier 3 a nameplate.</p>
     <div class="road">${RANKS.map((r, ri) => {
@@ -2172,17 +2187,136 @@ function renderProfile() {
   </section>`;
   $('#profName').addEventListener('change', async (e) => {
     P.name = e.target.value.replace(/\s+/g, ' ').trim().slice(0, 24); await saveMeta();
-    toast(P.name ? `Nice to meet you, ${P.name} 👋` : 'Name removed'); renderTop();
+    toast(P.name ? `Nice to meet you, ${P.name} 👋` : 'Name removed'); renderTop(); lbSync(true);
   });
 }
 function profPick(kind, list, el) {
   const item = list.find((x) => x.id === el.dataset.v); if (!item) return;
+  if (!owned(item) && item.special) { toast('🔒 Finish a week at #1 on the leaderboard to unlock this'); return; }
   if (!owned(item)) { const need = TIERS[item.at].min - S.meta.xp; toast(`🔒 Unlocks at ${tierLabel(item.at)} (${need.toLocaleString()} XP to go)`); return; }
   prof()[kind] = item.id; saveMeta(); applyTheme(); render();
 }
 ACT['prof-theme'] = (el) => profPick('theme', THEMES, el);
 ACT['prof-title'] = (el) => profPick('title', TITLES, el);
 ACT['prof-plate'] = (el) => profPick('plate', PLATES, el);
+
+// ═════════════════════════ LEADERBOARD (public site) ═════════════════════════
+// Opt-in. The server only ever gets: a private random id (stored hashed), your display name, total XP and the
+// last week of daily XP. Weekly board resets Sunday midnight (New York time); the top 3 go into the Hall of Champions.
+function lbId() {
+  if (!/^[a-f0-9]{32}$/.test(S.meta.lbId || '')) { const a = new Uint8Array(16); crypto.getRandomValues(a); S.meta.lbId = [...a].map((x) => x.toString(16).padStart(2, '0')).join(''); }
+  return S.meta.lbId;
+}
+function lbDays() { const out = {}; for (let i = 0; i < 8; i++) { const d = new Date(); d.setDate(d.getDate() - i); const k = dayKey(d); if (S.meta.days[k]) out[k] = S.meta.days[k]; } return out; }
+async function lbPost() {
+  const r = await fetch('/edge/lb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: lbId(), name: prof().name, total: S.meta.xp, days: lbDays() }) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `Leaderboard error ${r.status}`); UI.lb = null; return j;
+}
+let lbTimer = null;
+function lbSync(now = false) {
+  if (!S.status.public || !S.meta.lbJoined || !prof().name) return;
+  clearTimeout(lbTimer);
+  lbTimer = setTimeout(() => { lbPost().then(() => { if (route().view === 'leaderboard') lbFetch(true).then(drawLeaderboard).catch(() => {}); }).catch(() => {}); }, now ? 300 : 4000);
+}
+async function lbFetch(force) {
+  if (!force && UI.lb && Date.now() - UI.lb.at < 20000) return UI.lb.data;
+  const r = await fetch('/edge/lb', { headers: S.meta.lbId ? { 'x-lb-id': S.meta.lbId } : {}, cache: 'no-store' });
+  if (!r.ok) throw new Error('leaderboard ' + r.status);
+  const data = await r.json(); UI.lb = { at: Date.now(), data };
+  const wins = data.me?.wins || []; const old = S.meta.lbWins || [];
+  if (JSON.stringify(wins) !== JSON.stringify(old)) {
+    const fresh = wins.filter((w) => !old.some((x) => x.week === w.week));
+    S.meta.lbWins = wins; await saveMeta(); fresh.forEach((w) => celebrateWin(w));
+  }
+  return data;
+}
+function celebrateWin(w) {
+  confetti();
+  const el = document.createElement('div'); el.className = 'rankup'; el.setAttribute('role', 'status');
+  el.innerHTML = `<div style="font-size:2.4rem">${['👑', '🥈', '🥉'][w.place - 1]}</div><div class="spacer"><div class="rankup-k">${w.place === 1 ? 'WEEKLY CHAMPION' : 'TOP 3 THIS WEEK'}</div><b>${w.place === 1 ? 'You won the week!' : `You finished #${w.place}!`}</b>
+    <div class="small">${w.place === 1 ? 'Unlocked: Weekly Champion title + gold nameplate' : 'You’re in the Hall of Champions'}</div></div><a class="btn sm" href="#/profile">View</a><button type="button" class="icon-btn quiet" aria-label="Close">✕</button>`;
+  el.querySelectorAll('a, button').forEach((b) => b.addEventListener('click', () => el.remove()));
+  document.body.appendChild(el); setTimeout(() => el.remove(), 10000);
+}
+const fmtWeek = (k) => new Date(k + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function fmtUntil(iso) {
+  const ms = new Date(iso) - Date.now(); if (ms <= 0) return 'a moment';
+  const d = Math.floor(ms / 86400e3), h = Math.floor(ms / 3600e3) % 24, m = Math.floor(ms / 60e3) % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+const MEDAL = ['🥇', '🥈', '🥉'];
+function lbRows(rows, empty) {
+  return rows.length ? rows.map((r, i) => `<div class="lb-row ${r.me ? 'me' : ''} ${i < 3 ? 'top' : ''}">
+      <span class="lb-place">${MEDAL[i] || `#${i + 1}`}</span>${emblem(tierAt(r.total), 24)}
+      <span class="lb-name">${esc(r.name)}${r.champ ? ' <span title="Weekly champion">👑</span>' : ''}${r.me ? ' <span class="tag accent">you</span>' : ''}</span>
+      <b class="lb-xp">${r.xp.toLocaleString()}<span> XP</span></b>${route().admin ? `<button class="btn sm ghost lb-x" data-act="lb-admin-del" data-n="${esc(r.name)}" aria-label="Remove ${esc(r.name)}">✕</button>` : ''}</div>`).join('') : `<p class="muted" style="margin:0">${empty}</p>`;
+}
+function renderLeaderboard() {
+  $('#view').innerHTML = `<a href="#/" class="small">← Home</a><div id="lbBox" style="margin-top:10px"><div class="card building"><div class="spinner lg" style="margin:0 auto"></div><p class="muted">Loading the leaderboard…</p></div></div>`;
+  lbFetch(true).then(drawLeaderboard).catch(() => { const b = $('#lbBox'); if (b) b.innerHTML = '<div class="card">Couldn’t load the leaderboard right now. Check your connection and try again.</div>'; });
+}
+function drawLeaderboard(d) {
+  const box = $('#lbBox'); if (!box || !d) return;
+  const tab = UI.lbTab || 'week'; const rows = tab === 'week' ? d.weekly : d.allTime;
+  const place = d.me?.joined ? (tab === 'week' ? d.me.weekPlace : d.me.allPlace) : 0;
+  box.innerHTML = `
+  <section class="card lb-head stack">
+    <div class="row between"><h1 style="margin:0">🏆 Leaderboard</h1><span class="small muted">${d.players} player${d.players === 1 ? '' : 's'}</span></div>
+    <div class="seg lb-tabs">${[['week', 'This week'], ['all', 'All time']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-act="lb-tab" data-v="${k}">${l}</button>`).join('')}</div>
+    <div class="small muted">${tab === 'week' ? `Week of ${fmtWeek(d.week)} · resets Sunday at midnight (ET), in <b id="lbCountdown">${fmtUntil(d.resetsAt)}</b>` : 'Total XP earned on 3nc0de.'}</div>
+  </section>
+  ${tab === 'week' ? `<section class="card lb-prize"><div class="lb-prize-ico">🎁</div><div class="spacer"><b>This week’s prize</b>
+    <div class="small">🥇 <b>#1</b> when the week resets wins the <b>👑 Weekly Champion</b> title and the <b>gold Champion nameplate</b>, theirs to keep, plus a crown by their name. 🥈🥉 #2 and #3 make the Hall of Champions.</div></div></section>` : ''}
+  ${S.meta.lbJoined ? '' : `<section class="card lb-join row between"><div><b>Want to be on the board?</b><div class="small muted">Only your display name, rank and XP are shown.</div></div>
+    <button class="btn primary" data-act="lb-join">Join</button></section>`}
+  <section class="card lb-list">${lbRows(rows, tab === 'week' ? 'No one has scored this week yet. Study a little and you’re #1!' : 'No one has joined yet. Be the first!')}</section>
+  ${place > 50 ? `<p class="small muted" style="text-align:center">You’re #${place}. Keep going!</p>` : ''}
+  ${d.champions.length ? `<section class="card stack"><h2>🏛️ Hall of Champions</h2>${d.champions.map((c) => `<div class="hall-row"><span class="small muted">Week of ${fmtWeek(c.week)}</span>
+    <div>${c.top.map((x, i) => `<span class="hall-pl">${MEDAL[i]} ${esc(x.name)} <span class="muted small">${x.xp.toLocaleString()} XP</span></span>`).join('')}</div></div>`).join('')}</section>` : ''}
+  ${S.meta.lbJoined ? `<p class="small muted" style="text-align:center">You’re on the board as <b>${esc(prof().name)}</b> · <a href="#" data-act="lb-leave">Leave the leaderboard</a></p>` : ''}`;
+  clearInterval(UI.lbTick);
+  UI.lbTick = setInterval(() => { const c = $('#lbCountdown'); if (!c) return clearInterval(UI.lbTick); c.textContent = fmtUntil(d.resetsAt); }, 30000);
+}
+function homeLbCard() {
+  const host = $('#homeLb'); if (!host) return;
+  lbFetch().then((d) => {
+    const h = $('#homeLb'); if (!h) return;
+    const top = d.weekly.slice(0, 3); const me = d.me?.joined && d.me.weekPlace > 3 ? d.weekly[d.me.weekPlace - 1] : null;
+    h.innerHTML = `<div class="row between"><h2>🏆 This week</h2><a class="small" href="#/leaderboard">Full leaderboard →</a></div>
+      <div class="card lb-list">${lbRows(top, 'No one has scored this week yet. Your next study session could put you at #1!')}
+      ${me ? `<div class="lb-row me"><span class="lb-place">#${d.me.weekPlace}</span>${emblem(tierAt(me.total), 24)}<span class="lb-name">${esc(me.name)} <span class="tag accent">you</span></span><b class="lb-xp">${me.xp.toLocaleString()}<span> XP</span></b></div>` : ''}
+      ${S.meta.lbJoined ? '' : '<div class="row" style="margin-top:10px"><button class="btn sm primary" data-act="lb-join">Join the leaderboard</button><span class="small muted">Resets every Sunday · #1 wins a crown</span></div>'}</div>`;
+  }).catch(() => { const h = $('#homeLb'); if (h) h.innerHTML = ''; });
+}
+// Site owner only: #/leaderboard/admin shows a ✕ on each row (needs LB_ADMIN_KEY from Netlify; kept for this tab only).
+ACT['lb-admin-del'] = async (el) => {
+  const name = el.dataset.n; if (!confirm(`Remove “${name}” from the leaderboard?`)) return;
+  let key = sessionStorage.getItem('lb-admin') || prompt('Admin password (LB_ADMIN_KEY on Netlify):') || ''; if (!key) return;
+  const r = await fetch('/edge/lb', { method: 'DELETE', headers: { 'content-type': 'application/json', 'x-admin-key': key }, body: JSON.stringify({ name }) });
+  const j = await r.json().catch(() => ({}));
+  if (!j.removed) { sessionStorage.removeItem('lb-admin'); toast(r.ok ? 'Wrong password, or that name is already gone' : (j.error || 'Could not remove'), 'err'); return; }
+  sessionStorage.setItem('lb-admin', key); toast(`Removed ${name}`); renderLeaderboard();
+};
+ACT['lb-tab'] = (el) => { UI.lbTab = el.dataset.v; drawLeaderboard(UI.lb?.data); };
+ACT['lb-join'] = () => {
+  const go = async (name) => {
+    const P = prof(); const before = P.name; P.name = name; S.meta.lbJoined = true; lbId();
+    try { await lbPost(); await saveMeta(); toast(`You’re on the leaderboard as ${name} 🏆`); }
+    catch (e) { S.meta.lbJoined = false; P.name = before; await saveMeta(); toast(e.message, 'err'); return false; }
+    closeModal(); if (route().view === 'leaderboard') renderLeaderboard(); else render(); return true;
+  };
+  modal(`<h2>Join the leaderboard</h2><p class="muted">Pick the name everyone will see. Only your display name, rank and XP are shown, never your notebooks.</p>
+    <label class="field"><span>Display name</span><input type="text" id="lbName" maxlength="20" placeholder="e.g. Ko" value="${esc(prof().name)}" autocomplete="nickname"></label>
+    <p class="small muted">Keep it friendly. Scores reset every Sunday at midnight (ET), and the week’s #1 wins the 👑 Weekly Champion title.</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="close-modal">Cancel</button><button class="btn primary" data-act="lb-join-go">Join</button></div>`);
+  setTimeout(() => $('#lbName')?.focus(), 50);
+  ACT['lb-join-go'] = async () => { const n = ($('#lbName')?.value || '').replace(/\s+/g, ' ').trim(); if (n.length < 2) { toast('Pick a name with at least 2 characters'); return; } await go(n); };
+};
+ACT['lb-leave'] = async () => {
+  if (!confirm('Leave the leaderboard? Your name and score will be removed from it. Your XP and rank stay.')) return;
+  try { await fetch('/edge/lb', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: lbId() }) }); } catch { /* offline: still leave locally */ }
+  S.meta.lbJoined = false; UI.lb = null; await saveMeta(); toast('You left the leaderboard'); render();
+};
 
 // ═════════════════════════ SETTINGS ═════════════════════════
 function openSettings() {
@@ -2250,6 +2384,7 @@ async function importData(e) {
   await refreshStatus();
   render();
   EncodeWeb.cleanTrash();
+  lbSync(true);
   // Coming back to this tab: pick up anything changed on another device/tab (unless mid-session).
   document.addEventListener('visibilitychange', async () => {
     if (document.hidden || UI.recall?.queue?.length > UI.recall?.i || UI.exam?.phase === 'take' || UI.building || UI.chatBusy || UI.teachBusy) return;
