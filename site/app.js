@@ -312,6 +312,61 @@ document.addEventListener('click', (e) => {
   if (fn) { e.preventDefault(); fn(el, e); }
 });
 
+// ───────────────────────── appearance: theme + background photo ─────────────────────────
+// Photos: Wikimedia Commons (free licenses; credit shown in the corner and in Settings).
+const BGS = [{"id": "grid", "name": "Grid", "css": "grid-floor"}, {"id": "longroom", "name": "Long Room library", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4b/Long_Room_Interior%2C_Trinity_College_Dublin%2C_Ireland_-_Diliff.jpg/1920px-Long_Room_Interior%2C_Trinity_College_Dublin%2C_Ireland_-_Diliff.jpg", "page": "https://commons.wikimedia.org/wiki/File:Long_Room_Interior,_Trinity_College_Dublin,_Ireland_-_Diliff.jpg", "by": "Diliff", "license": "CC BY-SA 4.0", "pos": "50% 45%"}, {"id": "peabody", "name": "Peabody Library", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/George-peabody-library.jpg/1920px-George-peabody-library.jpg", "page": "https://commons.wikimedia.org/wiki/File:George-peabody-library.jpg", "by": "Matthew Petroff", "license": "CC BY-SA 3.0", "pos": "50% 40%"}, {"id": "moraine", "name": "Moraine Lake", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c5/Moraine_Lake_17092005.jpg/1920px-Moraine_Lake_17092005.jpg", "page": "https://commons.wikimedia.org/wiki/File:Moraine_Lake_17092005.jpg", "by": "Gorgo", "license": "Public domain", "pos": "50% 50%"}, {"id": "clearwater", "name": "Lake Clearwater", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Lake_Clearwater%2C_Canterbury%2C_New_Zealand_02.jpg/1920px-Lake_Clearwater%2C_Canterbury%2C_New_Zealand_02.jpg", "page": "https://commons.wikimedia.org/wiki/File:Lake_Clearwater,_Canterbury,_New_Zealand_02.jpg", "by": "Michal Klajban", "license": "CC BY-SA 4.0", "pos": "50% 50%"}, {"id": "archway", "name": "Sea arch", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Island_Archway%2C_Great_Ocean_Rd%2C_Victoria%2C_Australia_-_Nov_08.jpg/1920px-Island_Archway%2C_Great_Ocean_Rd%2C_Victoria%2C_Australia_-_Nov_08.jpg", "page": "https://commons.wikimedia.org/wiki/File:Island_Archway,_Great_Ocean_Rd,_Victoria,_Australia_-_Nov_08.jpg", "by": "Diliff", "license": "CC BY-SA 3.0", "pos": "50% 50%"}, {"id": "dunes", "name": "Dunes at dawn", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cb/Utah_Dunes_Landscape_-_West_Desert_District.jpg/1920px-Utah_Dunes_Landscape_-_West_Desert_District.jpg", "page": "https://commons.wikimedia.org/wiki/File:Utah_Dunes_Landscape_-_West_Desert_District.jpg", "by": "Bob Wick, BLM", "license": "Public domain", "pos": "50% 60%"}, {"id": "forest", "name": "Pine forest (painting)", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1e/Shishkin%2C_Ivan_-_Morning_in_a_Pine_Forest.jpg/1920px-Shishkin%2C_Ivan_-_Morning_in_a_Pine_Forest.jpg", "page": "https://commons.wikimedia.org/wiki/File:Shishkin,_Ivan_-_Morning_in_a_Pine_Forest.jpg", "by": "Ivan Shishkin & Konstantin Savitsky", "license": "Public domain", "pos": "50% 50%"}, {"id": "aurora", "name": "Aurora", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg/1920px-Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg", "page": "https://commons.wikimedia.org/wiki/File:Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg", "by": "Pavel.shyshkouski", "license": "CC BY-SA 4.0", "pos": "50% 40%"}, {"id": "stars", "name": "Starry night", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b4/ALMA_and_a_Starry_Night.jpg/1920px-ALMA_and_a_Starry_Night.jpg", "page": "https://commons.wikimedia.org/wiki/File:ALMA_and_a_Starry_Night.jpg", "by": "ESO/B. Tafreshi (twanight.org)", "license": "CC BY 4.0", "pos": "50% 50%"}, {"id": "moonlight", "name": "Moonlit boathouse", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8f/Holma_Boat_Club_by_the_light_of_the_moon.jpg/1920px-Holma_Boat_Club_by_the_light_of_the_moon.jpg", "page": "https://commons.wikimedia.org/wiki/File:Holma_Boat_Club_by_the_light_of_the_moon.jpg", "by": "W.carter", "license": "CC0", "pos": "40% 50%"}];
+const LOOK_KEY = 'encode-look';
+const LOOK = (() => { try { return { theme: 'auto', bg: 'none', strength: 'balanced', ...JSON.parse(localStorage.getItem(LOOK_KEY) || '{}') }; } catch { return { theme: 'auto', bg: 'none', strength: 'balanced' }; } })();
+const thumbUrl = (b) => b.url.replace('/1920px-', '/960px-');
+function applyLook() {
+  const root = document.documentElement;
+  if (LOOK.theme === 'auto') root.removeAttribute('data-theme'); else root.dataset.theme = LOOK.theme;
+  root.dataset.strength = LOOK.strength;
+  const b = BGS.find((x) => x.id === LOOK.bg);
+  let layer = document.getElementById('bgLayer');
+  if (!layer) {
+    layer = document.createElement('div'); layer.id = 'bgLayer'; layer.className = 'bg-layer'; layer.setAttribute('aria-hidden', 'true');
+    document.body.prepend(layer);
+    const veil = document.createElement('div'); veil.className = 'bg-veil'; veil.setAttribute('aria-hidden', 'true'); layer.after(veil);
+  }
+  let credit = document.getElementById('bgCredit');
+  if (!credit) { credit = document.createElement('a'); credit.id = 'bgCredit'; credit.className = 'bg-credit'; credit.target = '_blank'; credit.rel = 'noopener'; document.body.appendChild(credit); }
+  root.classList.toggle('has-photo', !!b);
+  root.classList.toggle('grid-bg', !!b?.css);
+  layer.classList.toggle('grid-floor', b?.css === 'grid-floor');
+  if (!b || b.css) { layer.style.backgroundImage = ''; layer.dataset.bg = b ? b.id : ''; layer.classList.toggle('ready', !!b); credit.hidden = true; return; }
+  credit.hidden = false; credit.href = b.page;
+  credit.textContent = `Photo: ${b.by}${b.license && b.license !== 'Public domain' ? ' · ' + b.license : ''}`;
+  layer.style.backgroundPosition = b.pos || 'center';
+  if (layer.dataset.bg === b.id) return;
+  layer.dataset.bg = b.id; layer.classList.remove('ready');
+  const img = new Image();
+  img.onload = () => { if (layer.dataset.bg !== b.id) return; layer.style.backgroundImage = `url("${b.url}")`; requestAnimationFrame(() => layer.classList.add('ready')); };
+  img.src = b.url;
+}
+function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify(LOOK)); } catch { /* private mode */ } applyLook(); }
+function lookSection() {
+  const seg = (act, cur, opts) => `<div class="seg">${opts.map(([v, l]) => `<button type="button" class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  return `<div class="look" id="lookBox">
+    <h3 style="margin:0">Appearance</h3>
+    <div class="row between"><span class="small muted">Theme</span>${seg('look-theme', LOOK.theme, [['auto', 'Auto'], ['light', '☀️ Light'], ['dark', '🌙 Dark']])}</div>
+    <div class="small muted">Background</div>
+    <div class="bg-grid">
+      <button type="button" class="bg-opt plain ${LOOK.bg === 'none' ? 'on' : ''}" data-act="look-bg" data-v="none"><span>Plain</span></button>
+      ${BGS.map((b) => b.css
+        ? `<button type="button" class="bg-opt grid-thumb ${LOOK.bg === b.id ? 'on' : ''}" data-act="look-bg" data-v="${b.id}" title="${esc(b.name)}"><span>${esc(b.name)}</span></button>`
+        : `<button type="button" class="bg-opt ${LOOK.bg === b.id ? 'on' : ''}" data-act="look-bg" data-v="${b.id}" title="${esc(b.name)}" style="background-image:url('${thumbUrl(b)}');background-position:${b.pos}"><span>${esc(b.name)}</span></button>`).join('')}
+    </div>
+    ${LOOK.bg !== 'none' && !BGS.find((x) => x.id === LOOK.bg)?.css ? `<div class="row between"><span class="small muted">Photo strength</span>${seg('look-strength', LOOK.strength, [['subtle', 'Subtle'], ['balanced', 'Balanced'], ['vivid', 'Vivid']])}</div>
+      <div class="small muted">${(() => { const b = BGS.find((x) => x.id === LOOK.bg); return b ? `“${esc(b.name)}” by ${esc(b.by)} (${esc(b.license)}), <a href="${b.page}" target="_blank" rel="noopener">Wikimedia Commons</a>` : ''; })()}</div>` : ''}
+  </div>`;
+}
+function refreshLook() { const el = document.getElementById('lookBox'); if (el) el.outerHTML = lookSection(); }
+ACT['look-theme'] = (el) => { LOOK.theme = el.dataset.v; saveLook(); refreshLook(); };
+ACT['look-bg'] = (el) => { LOOK.bg = el.dataset.v; saveLook(); refreshLook(); };
+ACT['look-strength'] = (el) => { LOOK.strength = el.dataset.v; saveLook(); refreshLook(); };
+applyLook();
+
 // ═════════════════════════ HOME ═════════════════════════
 function renderHome() {
   const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
@@ -844,11 +899,11 @@ function renderLearn(nb, el) {
   UI.cardRecall ||= {};
   UI.shots = {};
   loadVisuals(nb).then((changed) => { if (changed && route().tab === 'learn') render(); });
-  const noPics = nb.sources.filter((s) => ['pdf', 'pptx'].includes(s.kind) && s.images === undefined);
+  const noPics = nb.sources.filter((s) => ['pdf', 'pptx'].includes(s.kind) && s.images === undefined && !/\(sample\)/.test(s.name));
   el.innerHTML = `
   <div class="stack">
     <div class="card overview"><h2>${esc(d.title)}</h2><p style="margin:0">${esc(d.overview)}</p></div>
-    ${noPics.length ? `<div class="card flat tight row" style="background:var(--warn-soft);border-color:transparent">🖼️ <span class="spacer small">This notebook was made before Encode kept slide pictures. Drop <b>${noPics.map((s) => esc(s.name)).join(', ')}</b> on the Sources tab again to add them. Your study kit and progress stay the same.</span><a class="btn sm" href="#/nb/${nb.id}/sources">Go to Sources</a></div>` : ''}
+    ${noPics.length ? `<div class="card flat tight row" style="background:var(--warn-soft);border-color:transparent">🖼️ <span class="spacer small">This notebook was made before 3nc0de kept slide pictures. Drop <b>${noPics.map((s) => esc(s.name)).join(', ')}</b> on the Sources tab again to add them. Your study kit and progress stay the same.</span><a class="btn sm" href="#/nb/${nb.id}/sources">Go to Sources</a></div>` : ''}
 
     <div class="row between section"><div><h2>🃏 Visual summary cards</h2><div class="small muted">Study a card, then flip to recall mode and write what you remember.</div></div>
       <div class="seg"><button class="${mode === 'study' ? 'on' : ''}" data-act="card-mode" data-m="study">Study</button><button class="${mode === 'recall' ? 'on' : ''}" data-act="card-mode" data-m="recall">Cover & recall</button></div></div>
@@ -1603,6 +1658,7 @@ function renderProgress(nb, el) {
 function openSettings() {
   const st = S.status;
   modal(`<h2>Settings</h2><div class="stack">
+    ${lookSection()}
     <div class="card flat tight"><b>AI tutor: Google Gemini</b><div class="small" style="margin-top:4px">${st.ownKey
       ? '<span class="tag good">✓ your key</span> Using your own free Gemini key. It’s saved only in this browser and is only passed on to Google.'
       : st.sharedKey ? '<span class="tag good">✓ on</span> Using this site’s free shared allowance. If it runs out for the day, add your own free key below.'
@@ -1635,12 +1691,12 @@ ACT['forget-key'] = async () => { await api('/api/settings', { gemini_key: '' })
 ACT.export = async () => {
   const visuals = await DB.all('visuals');
   const blob = new Blob([JSON.stringify({ app: 'encode', version: 2, exported: Date.now(), meta: S.meta, notebooks: S.notebooks, visuals })], { type: 'application/json' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `encode-backup-${dayKey()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `3nc0de-backup-${dayKey()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 async function importData(e) {
   const f = e.target.files[0]; if (!f) return;
   try {
-    const data = JSON.parse(await f.text()); if (data.app !== 'encode') throw new Error('Not an Encode backup');
+    const data = JSON.parse(await f.text()); if (data.app !== 'encode') throw new Error('Not a 3nc0de backup');
     for (const v of data.visuals || []) await DB.put('visuals', v);
     for (const nb of data.notebooks) { const i = S.notebooks.findIndex((n) => n.id === nb.id); if (i >= 0) S.notebooks[i] = nb; else S.notebooks.push(nb); await DB.put('notebooks', nb); }
     S.meta.xp = Math.max(S.meta.xp, data.meta?.xp || 0); S.meta.days = { ...(data.meta?.days || {}), ...S.meta.days }; await saveMeta();
@@ -1655,7 +1711,7 @@ async function importData(e) {
     S.notebooks = data.notebooks || [];
     if (data.meta) S.meta = { key: 'stats', xp: 0, days: {}, ...data.meta };
   } catch {
-    $('#view').innerHTML = '<div class="card empty"><div class="big">🔒</div><h3>Encode can’t save in this browser</h3><p class="muted">Your browser is blocking website storage (private browsing, or cookies/site data turned off). Open Encode in a normal window, then reload.</p></div>';
+    $('#view').innerHTML = '<div class="card empty"><div class="big">🔒</div><h3>3nc0de can’t save in this browser</h3><p class="muted">Your browser is blocking website storage (private browsing, or cookies/site data turned off). Open Encode in a normal window, then reload.</p></div>';
     return;
   }
   render();
