@@ -1230,11 +1230,21 @@ function startRecall(nb, mode, focus, routeFocus) {
   return beginSession('nb:' + nb.id, routeFocus, poolFor(nb, mode, focus).map((card) => ({ nb, card })), mode === 'cram' ? 40 : 20);
 }
 ACT['rc-conf'] = (el) => { UI.recall.conf = UI.recall.conf === el.dataset.c ? null : el.dataset.c; $$('[data-act="rc-conf"]').forEach((b) => b.classList.toggle('on', b.dataset.c === UI.recall.conf)); };
+// Clear-cut answers are graded on the spot (saves AI): near-identical to the key, or covering its key words.
+function quickGrade(response, answer) {
+  if (!norm(response)) return null;
+  if (similar(response, answer) >= 0.9 || coverage(response, answer) >= 0.85) {
+    return { verdict: 'correct', score: 1, feedback: 'Matches the key points ✓ (checked instantly)', missing: [], instant: true };
+  }
+  return null;
+}
 ACT['rc-check'] = async () => {
   const R = UI.recall; const { nb, card } = recallItem(R);
   R.draft = $('#ans').value.trim();
   if (!R.draft) return ACT['rc-idk']();
-  if (UI.aiGrade && S.status.claude) {
+  const quick = quickGrade(R.draft, card.answer);
+  if (quick) R.result = quick;
+  else if (UI.aiGrade && S.status.claude) {
     R.grading = true; render();
     try { R.result = await ai('grade', { sources: aiSources(nb), concept: conceptName(nb, card.concept_id), question: card.question, answer: card.answer, response: R.draft }); }
     catch (e) { aiError(e); R.result = { verdict: null }; }
@@ -1423,7 +1433,7 @@ async function sendChat(nb, text) {
   const log = $('#chatLog'); const bubble = document.createElement('div'); bubble.className = 'msg assistant'; bubble.innerHTML = '<span class="spinner"></span>'; log.appendChild(bubble); log.scrollTop = log.scrollHeight;
   let out = '';
   try {
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sources: aiSources(nb), messages: nb.chat.slice(-30) }) });
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sources: aiSources(nb), messages: nb.chat.slice(-12) }) });
     if (!r.ok) { const j = await r.json().catch(() => ({})); const e = new Error(j.error || 'Chat failed'); e.code = j.code; throw e; }
     const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
     for (;;) {
@@ -1622,6 +1632,7 @@ ACT['ex-submit'] = async (_el, _e, force) => {
     if (q.type === 'mcq') return (results[i] = { verdict: a === q.answer ? 'correct' : 'incorrect' });
     if (!a) return (results[i] = { verdict: 'incorrect', feedback: 'Left blank.' });
     if (S.status.claude) {
+      const quick = quickGrade(a, q.answer); if (quick) return (results[i] = quick);
       try { return (results[i] = await ai('grade', { sources: aiSources(nb), concept: conceptName(nb, q.concept_id), question: q.question, answer: q.answer, response: a })); }
       catch (e) { if (e.code === 'no_key') throw e; }
     }
@@ -1689,11 +1700,11 @@ function openSettings() {
   modal(`<h2>Settings</h2><div class="stack">
     <div class="card flat tight"><b>AI tutor: Google Gemini</b><div class="small" style="margin-top:4px">${st.ownKey
       ? '<span class="tag good">✓ your key</span> Using your own free Gemini key. It’s saved only in this browser and is only passed on to Google.'
-      : st.sharedKey ? '<span class="tag good">✓ on</span> Using this site’s free shared allowance. If it runs out for the day, add your own free key below.'
+      : st.sharedKey ? '<span class="tag good">✓ on</span> Using this site’s free shared allowance. If it ever runs out for the day, you can add your own free key below.'
       : '<span class="tag bad">off</span> Add a free Gemini key below to turn on the AI tutor.'}</div></div>
     <label class="field"><span>Your Gemini API key (optional)</span><input type="password" id="kGemini" placeholder="${st.ownKey ? '•••••••• saved (leave blank to keep)' : 'Paste your key'}" autocomplete="off"></label>
     <div class="small muted">Get one free in about a minute at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.${st.ownKey ? ' <a href="#" data-act="forget-key">Remove my key</a>' : ''}</div>
-    <div class="field"><span>Gemini model</span><select id="kModel"><option value="auto">Automatic (newest Flash model)</option>${st.model ? `<option value="${esc(st.model)}" selected>${esc(st.model)}</option>` : ''}</select></div>
+    <div class="field"><span>Gemini model</span><select id="kModel"><option value="auto">Automatic (Lite for quick tasks, Flash for kits &amp; exams)</option>${st.model ? `<option value="${esc(st.model)}" selected>${esc(st.model)}</option>` : ''}</select></div>
     <div class="small muted">On Gemini’s free tier Google may use what you send to improve its products, so don’t upload anything private.</div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="save-settings">Save</button></div>
     <hr style="border:0;border-top:1px solid var(--border)">
@@ -1705,7 +1716,7 @@ function openSettings() {
     api('/api/models', null, 'GET').then((r) => {
       const sel = $('#kModel'); if (!sel) return;
       const cur = EncodeWeb.model();
-      sel.innerHTML = `<option value="auto">Automatic (now ${esc(r.auto || 'newest Flash')})</option>` + r.models.map((m) => `<option value="${esc(m.id)}" ${cur === m.id ? 'selected' : ''}>${esc(m.label)} (${esc(m.id)})</option>`).join('');
+      sel.innerHTML = `<option value="auto">Automatic (Lite for quick tasks, Flash for kits &amp; exams)</option>` + r.models.map((m) => `<option value="${esc(m.id)}" ${cur === m.id ? 'selected' : ''}>${esc(m.label)} (${esc(m.id)})</option>`).join('');
     }).catch(() => {});
   }
 }

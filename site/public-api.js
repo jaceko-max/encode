@@ -73,24 +73,27 @@
   const isText = (id) => /^gemini-/.test(id) && !/(image|tts|live|audio|embedding|vision|robotics|computer|native|exp|learnlm|transcribe|nano|banana|omni|argon|customtools)/.test(id);
   // Fast, dependable picks on the free tier (Nov 2026). The newest models can sit in a queue for minutes,
   // so they're tried only after these. Anything not on this list still gets used, newest first.
-  const PREFERRED = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+  // Fast, dependable picks on the free tier (Nov 2026). Lite models are ~3–5× cheaper and answer quicker,
+  // so everyday tasks use them; Flash is kept for building kits, exams and YouTube notes.
+  const PREFERRED = { full: ['gemini-3.6-flash', 'gemini-3.5-flash'], lite: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'] };
   const bad = new Set(); // models that failed or stalled this session
   const attempts = []; // recent model attempts, for troubleshooting (EncodeWeb.attempts)
-  function rankText(models) {
+  function rankText(models, tier = 'full') {
     const ids = models.map((m) => m.id).filter(isText);
     const byVer = (list) => list.sort((a, b) => ver(b) - ver(a));
     const flash = byVer(ids.filter((id) => /flash(?!-lite)/.test(id) && !/preview|latest/.test(id)));
     const lite = byVer(ids.filter((id) => /flash-lite/.test(id) && !/preview|latest/.test(id)));
     const rest = byVer(ids.filter((id) => /flash/.test(id)));
-    return [...new Set([...PREFERRED.filter((id) => ids.includes(id)), ...lite, ...flash, ...rest])];
+    const pf = PREFERRED.full.filter((id) => ids.includes(id)), pl = PREFERRED.lite.filter((id) => ids.includes(id));
+    return [...new Set(tier === 'lite' ? [...pl, ...lite, ...pf, ...flash, ...rest] : [...pf, ...pl, ...lite, ...flash, ...rest])];
   }
-  const pickText = (models) => rankText(models)[0];
-  async function modelChain() {
+  const pickText = (models) => rankText(models, 'full')[0];
+  async function modelChain(tier = 'full') {
     let ranked = [];
-    try { ranked = rankText(await listModels()); } catch { ranked = [...PREFERRED]; }
+    try { ranked = rankText(await listModels(), tier); } catch { ranked = tier === 'lite' ? [...PREFERRED.lite, ...PREFERRED.full] : [...PREFERRED.full, ...PREFERRED.lite]; }
     const chosen = LS.get(MODEL_LS);
     const chain = [...new Set([...(chosen ? [chosen] : []), ...ranked])].filter((id) => !bad.has(id) || id === chosen);
-    return chain.length ? chain : [...PREFERRED];
+    return chain.length ? chain : [...PREFERRED.full];
   }
   async function textModel() { return (await modelChain())[0]; }
   async function imageModel() {
@@ -118,8 +121,8 @@
   }
 
   /** A Gemini call that moves to the next model if one is unavailable, out of quota or stuck in a queue. */
-  async function gemini(body, { model, onText, firstByteMs = 60000 } = {}) {
-    const chain = model ? [model] : (await modelChain()).slice(0, 4);
+  async function gemini(body, { model, onText, firstByteMs = 60000, tier = 'full' } = {}) {
+    const chain = model ? [model] : (await modelChain(tier)).slice(0, 4);
     let last, best;
     for (const m of chain) {
       const state = { sent: false }; const rec = { model: m, start: Date.now() }; attempts.push(rec); if (attempts.length > 30) attempts.shift();
@@ -195,20 +198,20 @@
     const i = [t.indexOf('{'), t.indexOf('[')].filter((x) => x >= 0).sort((a, b) => a - b)[0] ?? 0;
     return JSON.parse(t.slice(i));
   }
-  async function callJSON({ sources, task, parts, schema, thinking = 2048, maxTokens = 32768, wait = 90000 }) {
+  async function callJSON({ sources, task, parts, schema, thinking = 1024, maxTokens = 32768, wait = 90000, tier = 'full' }) {
     const userParts = [];
     if (sources) userParts.push({ text: materials(sources) });
     userParts.push(...(typeof parts === 'string' ? [{ text: parts }] : parts));
     const body = {
       systemInstruction: { parts: [{ text: BASE_PERSONA + '\n\n' + task + '\n\nRespond with JSON matching the required schema.' }] },
       contents: [{ role: 'user', parts: userParts }],
-      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema, maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: thinking } },
+      generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema, maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: Math.max(thinking, 128) } },
     };
     let out;
-    try { out = await gemini(body, { firstByteMs: wait }); }
+    try { out = await gemini(body, { firstByteMs: wait, tier }); }
     catch (e) {
       // Older models don't know thinkingConfig; retry once without it.
-      if (/thinking/i.test(e.message)) { delete body.generationConfig.thinkingConfig; out = await gemini(body, { firstByteMs: wait }); } else throw e;
+      if (/thinking|invalid argument/i.test(e.message)) { delete body.generationConfig.thinkingConfig; out = await gemini(body, { firstByteMs: wait, tier }); } else throw e;
     }
     try { return parseJSON(out.text); }
     catch {
@@ -329,27 +332,27 @@ For each topic, write the YouTube search that will surface a great teaching vide
         parts.push({ text: `[${im.id}] ${im.label || ''}` }, { inlineData: { mimeType: 'image/jpeg', data: im.data } });
       }
       parts.push({ text: (imgs.length ? `${imgs.length} slide pictures are attached above. ` : 'No slide pictures are attached. ') + 'Build the study kit now.' });
-      return callJSON({ sources: p.sources, task: TASK.digest, parts, schema: SCHEMA.digest, thinking: 4096, maxTokens: 65536, wait: 240000 });
+      return callJSON({ sources: p.sources, task: TASK.digest, parts, schema: SCHEMA.digest, thinking: 2048, maxTokens: 65536, wait: 240000 });
     },
     grade(p) {
       const msg = `Concept: ${p.concept || ''}\nQuestion: ${p.question || ''}\nModel answer: ${p.answer || ''}\nStudent answer: ${p.response || '(blank)'}`;
-      return callJSON({ sources: p.sources, task: TASK.grade, parts: msg, schema: SCHEMA.grade, thinking: 0, maxTokens: 2048 });
+      return callJSON({ task: TASK.grade, parts: msg, schema: SCHEMA.grade, thinking: 0, maxTokens: 1024, tier: 'lite' });
     },
     feynman(p) {
       const convo = (p.history || []).map((h) => `${h.who || 'student'}: ${h.text || ''}`).join('\n');
       const msg = `Concept: ${p.concept || ''}\nPrompt given to the student: ${p.prompt || ''}\n${convo ? `Earlier rounds:\n${convo}\n` : ''}Student's explanation now:\n${p.explanation || ''}`;
-      return callJSON({ sources: p.sources, task: TASK.feynman, parts: msg, schema: SCHEMA.feynman, thinking: 1024, maxTokens: 6000 });
+      return callJSON({ sources: p.sources, task: TASK.feynman, parts: msg, schema: SCHEMA.feynman, thinking: 256, maxTokens: 4000, tier: 'lite' });
     },
     exam(p) {
       const concepts = (p.concepts || []).map((c) => `${c.id}: ${c.name}`).join('\n');
       const seen = (p.seen || []).slice(0, 60).map((q) => `- ${q}`).join('\n');
       const msg = `Write ${Math.round(p.count || 10)} questions.\nConcept list:\n${concepts}\nWeak concepts to emphasize (about half the questions): ${(p.weak || []).join(', ') || 'none yet'}\nAlready seen questions (avoid repeating):\n${seen || '- none'}`;
-      return callJSON({ sources: p.sources, task: TASK.exam, parts: msg, schema: SCHEMA.exam, thinking: 2048, maxTokens: 24000, wait: 150000 });
+      return callJSON({ sources: p.sources, task: TASK.exam, parts: msg, schema: SCHEMA.exam, thinking: 1024, maxTokens: 20000, wait: 150000 });
     },
     async svg(p) {
       const msg = `Concept: ${p.name || ''}\nDefinition: ${p.definition || ''}\nDiagram idea: ${p.visual_hint || ''}\n`
         + (p.style === 'mnemonic' ? `Make it a funny, memorable MNEMONIC scene for: ${p.mnemonic || ''}` : 'Make it an accurate labeled teaching diagram.');
-      const out = await callJSON({ sources: p.sources, task: TASK.svg, parts: msg, schema: SCHEMA.svg, thinking: 1024, maxTokens: 16000, wait: 150000 });
+      const out = await callJSON({ sources: p.sources, task: TASK.svg, parts: msg, schema: SCHEMA.svg, thinking: 512, maxTokens: 12000, wait: 150000 });
       out.svg = sanitizeSvg(out.svg); out.kind = 'svg';
       return out;
     },
@@ -366,7 +369,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
         + (p.focus ? `Focus ONLY on: ${p.focus}\n` : '') + (p.weak?.length ? `Weakest concepts (cover these first): ${p.weak.join(', ')}\n` : '')
         + (p.haveTopics?.length ? `Already covered (pick different topics): ${p.haveTopics.join('; ')}\n` : '')
         + `Plan ${count} YouTube searches.`;
-      const plan = await callJSON({ task: TASK.videos, parts: msg, schema: SCHEMA.videoPlan, thinking: 512, maxTokens: 6000 });
+      const plan = await callJSON({ task: TASK.videos, parts: msg, schema: SCHEMA.videoPlan, thinking: 0, maxTokens: 4000, tier: 'lite' });
       const st = await edgeStatus();
       const out = [];
       for (const v of (plan.searches || []).slice(0, count)) {
@@ -452,7 +455,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
 
   function chatStream(p) {
     const contents = [];
-    for (const m of p.messages || []) {
+    for (const m of (p.messages || []).slice(-12)) {
       const role = m.role === 'assistant' ? 'model' : 'user';
       if (contents.length && contents.at(-1).role === role) contents.at(-1).parts[0].text += '\n\n' + String(m.content || '');
       else contents.push({ role, parts: [{ text: String(m.content || '') }] });
@@ -460,15 +463,15 @@ For each topic, write the YouTube search that will surface a great teaching vide
     if (!contents.length || contents[0].role !== 'user') contents.unshift({ role: 'user', parts: [{ text: "Hi! Let's study." }] });
     const body = {
       systemInstruction: { parts: [{ text: BASE_PERSONA + '\n\n' + TASK.chat + '\n\n' + materials(p.sources) }] },
-      contents, generationConfig: { maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 0 } },
+      contents, generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 128 } },
     };
     const enc = new TextEncoder();
     const stream = new ReadableStream({
       async start(ctrl) {
         const send = (o) => ctrl.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
         try {
-          try { await gemini(body, { onText: (t) => send({ text: t }) }); }
-          catch (e) { if (/thinking/i.test(e.message)) { delete body.generationConfig.thinkingConfig; await gemini(body, { onText: (t) => send({ text: t }) }); } else throw e; }
+          try { await gemini(body, { onText: (t) => send({ text: t }), tier: 'lite' }); }
+          catch (e) { if (/thinking|invalid argument/i.test(e.message)) { delete body.generationConfig.thinkingConfig; await gemini(body, { onText: (t) => send({ text: t }), tier: 'lite' }); } else throw e; }
         } catch (e) { send({ error: e.message }); }
         send({ done: true }); ctrl.close();
       },
