@@ -481,3 +481,24 @@ html .path a.next, html.has-photo .path a.next { color: var(--text); background:
 .donate-ico { font-size: 1.6rem; flex: none; }
 .donate-to { color: var(--text); word-break: break-all; }
 @media (max-width: 520px) { .card.donate .btn { width: 100%; } }
+
+/* ═════════════ smooth scrolling ═════════════ */
+/* Frosted-glass blur on every card had to be recomputed on each scroll frame (very heavy on phones).
+   Over the plain black grid, near-solid surfaces look the same and cost nothing. */
+html.has-photo .card, html.has-photo .path a, html.has-photo .tabs, html.has-photo .chip, html.has-photo .icon-btn, .site-foot, .bg-credit {
+  -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.has-photo .card, html.has-photo .chip, html.has-photo .icon-btn { background-color: color-mix(in srgb, var(--surface) 94%, transparent); }
+html.has-photo .tabs { background-color: color-mix(in srgb, var(--surface) 90%, transparent); }
+.site-foot { background: color-mix(in srgb, var(--surface) 92%, transparent); }
+/* header: one light blur on computers, solid on phones/tablets */
+.topbar { background: color-mix(in srgb, var(--bg) 84%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+@media (hover: none), (max-width: 760px) {
+  .topbar { background: color-mix(in srgb, var(--bg) 95%, transparent); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+/* the grid is drawn once on its own GPU layer and never repainted while the page scrolls */
+.bg-layer, .bg-layer.grid-floor { contain: strict; transform: translateZ(0); will-change: transform; }
+.bg-layer.grid-floor::before { -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.bg-layer.grid-floor::after { filter: none; }
+body { background-attachment: scroll; }
+/* hover lift only where there is a mouse (stops cards jumping under a finger mid-scroll) */
+@media (hover: none) { .nb-card:hover, .card:hover { transform: none; } }
