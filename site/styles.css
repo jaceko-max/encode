@@ -502,3 +502,12 @@ html.has-photo .tabs { background-color: color-mix(in srgb, var(--surface) 90%, 
 body { background-attachment: scroll; }
 /* hover lift only where there is a mouse (stops cards jumping under a finger mid-scroll) */
 @media (hover: none) { .nb-card:hover, .card:hover { transform: none; } }
+
+/* ═════════════ background picker ═════════════ */
+.bg-search { gap: 8px; flex-wrap: nowrap; }
+.bg-search input { flex: 1; min-width: 0; }
+.bg-search .btn { white-space: nowrap; }
+.bg-veil { contain: strict; transform: translateZ(0); }
+.bg-opt { -webkit-tap-highlight-color: transparent; }
+/* phones: photo credit sits at the very bottom of the page instead of floating over content */
+@media (max-width: 760px) { .bg-credit { position: static; display: block; width: fit-content; margin: -16px auto 24px; } .bg-credit[hidden] { display: none; } }

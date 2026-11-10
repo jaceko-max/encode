@@ -317,17 +317,22 @@ document.addEventListener('click', (e) => {
   if (fn) { e.preventDefault(); fn(el, e); }
 });
 
-// ───────────────────────── appearance: theme + background photo ─────────────────────────
-// Photos: Wikimedia Commons (free licenses; credit shown in the corner and in Settings).
-const BGS = [{"id": "grid", "name": "Grid", "css": "grid-floor"}];
-const LOOK_KEY = 'encode-look';
-const LOOK = { theme: 'dark', bg: 'grid', strength: 'balanced' }; // fixed look: black grid background
-const thumbUrl = (b) => b.url.replace('/1920px-', '/960px-');
+// ───────────────────────── appearance: background ─────────────────────────
+// Default is the black perspective grid. Photos come from Wikimedia Commons (free licenses; credit shown in the corner and in Settings).
+const BGS = [{ id: 'grid', name: 'Grid', css: 'grid-floor' }, ...[{"id": "longroom", "name": "Long Room library", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4b/Long_Room_Interior%2C_Trinity_College_Dublin%2C_Ireland_-_Diliff.jpg/1920px-Long_Room_Interior%2C_Trinity_College_Dublin%2C_Ireland_-_Diliff.jpg", "page": "https://commons.wikimedia.org/wiki/File:Long_Room_Interior,_Trinity_College_Dublin,_Ireland_-_Diliff.jpg", "by": "Diliff", "license": "CC BY-SA 4.0", "pos": "50% 45%"}, {"id": "peabody", "name": "Peabody Library", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/George-peabody-library.jpg/1920px-George-peabody-library.jpg", "page": "https://commons.wikimedia.org/wiki/File:George-peabody-library.jpg", "by": "Matthew Petroff", "license": "CC BY-SA 3.0", "pos": "50% 40%"}, {"id": "moraine", "name": "Moraine Lake", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c5/Moraine_Lake_17092005.jpg/1920px-Moraine_Lake_17092005.jpg", "page": "https://commons.wikimedia.org/wiki/File:Moraine_Lake_17092005.jpg", "by": "Gorgo", "license": "Public domain", "pos": "50% 50%"}, {"id": "clearwater", "name": "Lake Clearwater", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Lake_Clearwater%2C_Canterbury%2C_New_Zealand_02.jpg/1920px-Lake_Clearwater%2C_Canterbury%2C_New_Zealand_02.jpg", "page": "https://commons.wikimedia.org/wiki/File:Lake_Clearwater,_Canterbury,_New_Zealand_02.jpg", "by": "Michal Klajban", "license": "CC BY-SA 4.0", "pos": "50% 50%"}, {"id": "archway", "name": "Sea arch", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Island_Archway%2C_Great_Ocean_Rd%2C_Victoria%2C_Australia_-_Nov_08.jpg/1920px-Island_Archway%2C_Great_Ocean_Rd%2C_Victoria%2C_Australia_-_Nov_08.jpg", "page": "https://commons.wikimedia.org/wiki/File:Island_Archway,_Great_Ocean_Rd,_Victoria,_Australia_-_Nov_08.jpg", "by": "Diliff", "license": "CC BY-SA 3.0", "pos": "50% 50%"}, {"id": "dunes", "name": "Dunes at dawn", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cb/Utah_Dunes_Landscape_-_West_Desert_District.jpg/1920px-Utah_Dunes_Landscape_-_West_Desert_District.jpg", "page": "https://commons.wikimedia.org/wiki/File:Utah_Dunes_Landscape_-_West_Desert_District.jpg", "by": "Bob Wick, BLM", "license": "Public domain", "pos": "50% 60%"}, {"id": "forest", "name": "Pine forest (painting)", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1e/Shishkin%2C_Ivan_-_Morning_in_a_Pine_Forest.jpg/1920px-Shishkin%2C_Ivan_-_Morning_in_a_Pine_Forest.jpg", "page": "https://commons.wikimedia.org/wiki/File:Shishkin,_Ivan_-_Morning_in_a_Pine_Forest.jpg", "by": "Ivan Shishkin & Konstantin Savitsky", "license": "Public domain", "pos": "50% 50%"}, {"id": "aurora", "name": "Aurora", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg/1920px-Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg", "page": "https://commons.wikimedia.org/wiki/File:Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg", "by": "Pavel.shyshkouski", "license": "CC BY-SA 4.0", "pos": "50% 40%"}, {"id": "stars", "name": "Starry night", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b4/ALMA_and_a_Starry_Night.jpg/1920px-ALMA_and_a_Starry_Night.jpg", "page": "https://commons.wikimedia.org/wiki/File:ALMA_and_a_Starry_Night.jpg", "by": "ESO/B. Tafreshi (twanight.org)", "license": "CC BY 4.0", "pos": "50% 50%"}, {"id": "moonlight", "name": "Moonlit boathouse", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8f/Holma_Boat_Club_by_the_light_of_the_moon.jpg/1920px-Holma_Boat_Club_by_the_light_of_the_moon.jpg", "page": "https://commons.wikimedia.org/wiki/File:Holma_Boat_Club_by_the_light_of_the_moon.jpg", "by": "W.carter", "license": "CC0", "pos": "40% 50%"}]];
+const LOOK_KEY = 'encode-look-v2';
+const LOOK = { theme: 'dark', bg: 'grid', strength: 'balanced', custom: null };
+try { const saved = JSON.parse(localStorage.getItem(LOOK_KEY) || 'null'); if (saved) Object.assign(LOOK, { bg: saved.bg || 'grid', strength: saved.strength || 'balanced', custom: saved.custom || null }); } catch { /* private mode */ }
+const okPhoto = (u) => /^https:\/\/(upload|thumb)\.wikimedia\.org\//.test(String(u || ''));
+const cssUrl = (u) => `url(${String(u).replace(/["'()\\\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})`;
+function findBg(id) { return BGS.find((x) => x.id === id) || (LOOK.custom && LOOK.custom.id === id && okPhoto(LOOK.custom.url) ? LOOK.custom : null); }
+if (LOOK.bg !== 'none' && !findBg(LOOK.bg)) LOOK.bg = 'grid';
+const thumbUrl = (b) => b.url.replace('/1920px-', '/500px-');
 function applyLook() {
   const root = document.documentElement;
-  if (LOOK.theme === 'auto') root.removeAttribute('data-theme'); else root.dataset.theme = LOOK.theme;
+  root.dataset.theme = 'dark';
   root.dataset.strength = LOOK.strength;
-  const b = BGS.find((x) => x.id === LOOK.bg);
+  const b = LOOK.bg === 'none' ? null : findBg(LOOK.bg);
   let layer = document.getElementById('bgLayer');
   if (!layer) {
     layer = document.createElement('div'); layer.id = 'bgLayer'; layer.className = 'bg-layer'; layer.setAttribute('aria-hidden', 'true');
@@ -340,36 +345,93 @@ function applyLook() {
   root.classList.toggle('grid-bg', !!b?.css);
   layer.classList.toggle('grid-floor', b?.css === 'grid-floor');
   if (!b || b.css) { layer.style.backgroundImage = ''; layer.dataset.bg = b ? b.id : ''; layer.classList.toggle('ready', !!b); credit.hidden = true; return; }
-  credit.hidden = false; credit.href = b.page;
+  credit.hidden = false; credit.href = /^https:\/\/commons\.wikimedia\.org\//.test(b.page || '') ? b.page : 'https://commons.wikimedia.org/';
   credit.textContent = `Photo: ${b.by}${b.license && b.license !== 'Public domain' ? ' · ' + b.license : ''}`;
   layer.style.backgroundPosition = b.pos || 'center';
   if (layer.dataset.bg === b.id) return;
   layer.dataset.bg = b.id; layer.classList.remove('ready');
   const img = new Image();
-  img.onload = () => { if (layer.dataset.bg !== b.id) return; layer.style.backgroundImage = `url("${b.url}")`; requestAnimationFrame(() => layer.classList.add('ready')); };
+  img.onload = () => { if (layer.dataset.bg !== b.id) return; layer.style.backgroundImage = cssUrl(b.url); requestAnimationFrame(() => layer.classList.add('ready')); };
+  img.onerror = () => { if (layer.dataset.bg !== b.id) return; LOOK.bg = 'grid'; saveLook(); refreshLook(); toast('That background couldn’t load, so the grid is back.'); };
   img.src = b.url;
 }
-function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify(LOOK)); } catch { /* private mode */ } applyLook(); }
+function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify({ bg: LOOK.bg, strength: LOOK.strength, custom: LOOK.custom })); } catch { /* private mode */ } applyLook(); }
+
+// Search Wikimedia Commons for big, free landscape photos (no AI, no key; runs in the browser).
+const htmlText = (h) => new DOMParser().parseFromString(String(h || ''), 'text/html').body.textContent.replace(/\s+/g, ' ').trim();
+async function commonsSearch(q, cat) {
+  const p = new URLSearchParams({ action: 'query', format: 'json', origin: '*', generator: 'search', gsrnamespace: '6', gsrlimit: '40',
+    gsrsearch: `${q} incategory:"${cat}" filetype:bitmap`, prop: 'imageinfo', iiprop: 'url|size|extmetadata', iiurlwidth: '1920',
+    iiextmetadatafilter: 'LicenseShortName|Artist' });
+  const r = await fetch('https://commons.wikimedia.org/w/api.php?' + p);
+  if (!r.ok) throw new Error('commons ' + r.status);
+  const d = await r.json();
+  return Object.values(d.query?.pages || {}).sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((pg) => {
+    const ii = pg.imageinfo?.[0];
+    if (!ii || ii.width < 1920 || ii.width < ii.height * 1.25) return null; // big + landscape only
+    const url = String(ii.thumburl || '').split('?')[0];
+    if (!okPhoto(url) || !url.includes('/1920px-')) return null;
+    const md = ii.extmetadata || {};
+    const name = String(pg.title || '').replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+    return { id: 'c' + pg.pageid, name, url, page: String(ii.descriptionurl || ''), by: htmlText(md.Artist?.value).slice(0, 60) || 'Unknown',
+      license: htmlText(md.LicenseShortName?.value) || 'see source', pos: '50% 50%' };
+  }).filter(Boolean);
+}
+async function searchBackgrounds(q) {
+  let out = await commonsSearch(q, 'Featured_pictures_on_Wikimedia_Commons');
+  if (out.length < 6) {
+    try { const more = await commonsSearch(q, 'Quality_images'); out = [...out, ...more.filter((m) => !out.some((o) => o.id === m.id))]; } catch { /* keep what we have */ }
+  }
+  return out.slice(0, 12);
+}
+
+function bgButton(b, act, attrs) {
+  const on = LOOK.bg === b.id ? 'on' : '';
+  if (b.css) return `<button type="button" class="bg-opt grid-thumb ${on}" data-act="look-bg" data-v="${b.id}" title="Grid (default)"><span>Grid · default</span></button>`;
+  return `<button type="button" class="bg-opt ${on}" data-act="${act}" ${attrs} title="${esc(b.name)}" style="background-image:${cssUrl(thumbUrl(b))};background-position:${esc(b.pos || 'center')}"><span>${esc(b.name)}</span></button>`;
+}
 function lookSection() {
   const seg = (act, cur, opts) => `<div class="seg">${opts.map(([v, l]) => `<button type="button" class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  const cur = LOOK.bg === 'none' ? null : findBg(LOOK.bg);
+  const custom = LOOK.custom && okPhoto(LOOK.custom.url) ? LOOK.custom : null;
+  const R = UI.bgSearch || {};
   return `<div class="look" id="lookBox">
-    <h3 style="margin:0">Appearance</h3>
-    <div class="row between"><span class="small muted">Theme</span>${seg('look-theme', LOOK.theme, [['auto', 'Auto'], ['light', '☀️ Light'], ['dark', '🌙 Dark']])}</div>
-    <div class="small muted">Background</div>
+    <h3 style="margin:0">Background</h3>
     <div class="bg-grid">
+      ${bgButton(BGS[0])}
       <button type="button" class="bg-opt plain ${LOOK.bg === 'none' ? 'on' : ''}" data-act="look-bg" data-v="none"><span>Plain</span></button>
-      ${BGS.map((b) => b.css
-        ? `<button type="button" class="bg-opt grid-thumb ${LOOK.bg === b.id ? 'on' : ''}" data-act="look-bg" data-v="${b.id}" title="${esc(b.name)}"><span>${esc(b.name)}</span></button>`
-        : `<button type="button" class="bg-opt ${LOOK.bg === b.id ? 'on' : ''}" data-act="look-bg" data-v="${b.id}" title="${esc(b.name)}" style="background-image:url('${thumbUrl(b)}');background-position:${b.pos}"><span>${esc(b.name)}</span></button>`).join('')}
+      ${custom ? bgButton(custom, 'look-bg', `data-v="${esc(custom.id)}"`) : ''}
+      ${BGS.slice(1).map((b) => bgButton(b, 'look-bg', `data-v="${b.id}"`)).join('')}
     </div>
-    ${LOOK.bg !== 'none' && !BGS.find((x) => x.id === LOOK.bg)?.css ? `<div class="row between"><span class="small muted">Photo strength</span>${seg('look-strength', LOOK.strength, [['subtle', 'Subtle'], ['balanced', 'Balanced'], ['vivid', 'Vivid']])}</div>
-      <div class="small muted">${(() => { const b = BGS.find((x) => x.id === LOOK.bg); return b ? `“${esc(b.name)}” by ${esc(b.by)} (${esc(b.license)}), <a href="${b.page}" target="_blank" rel="noopener">Wikimedia Commons</a>` : ''; })()}</div>` : ''}
+    <div class="small muted">Find more on the web</div>
+    <div class="row bg-search"><input type="search" id="bgQ" placeholder="e.g. ocean, mountains, city at night, space" value="${esc(R.q || '')}" enterkeyhint="search" autocomplete="off">
+      <button type="button" class="btn sm" data-act="bg-search" ${R.busy ? 'disabled' : ''}>${R.busy ? '<span class="spinner"></span> Searching' : '🔎 Search'}</button></div>
+    ${R.err ? `<div class="small muted">${esc(R.err)}</div>` : ''}
+    ${R.results?.length ? `<div class="bg-grid">${R.results.map((b, i) => bgButton(b, 'bg-pick', `data-i="${i}"`)).join('')}</div>
+      <div class="small muted">Free-to-use photos from Wikimedia Commons. Tap one to use it.</div>` : ''}
+    ${cur && !cur.css ? `<div class="row between"><span class="small muted">Photo strength</span>${seg('look-strength', LOOK.strength, [['subtle', 'Subtle'], ['balanced', 'Balanced'], ['vivid', 'Vivid']])}</div>
+      <div class="small muted">“${esc(cur.name)}” by ${esc(cur.by)} (${esc(cur.license)}), <a href="${esc(cur.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>` : ''}
   </div>`;
 }
-function refreshLook() { const el = document.getElementById('lookBox'); if (el) el.outerHTML = lookSection(); }
-ACT['look-theme'] = (el) => { LOOK.theme = el.dataset.v; saveLook(); refreshLook(); };
+function refreshLook() {
+  const q = document.getElementById('bgQ'); if (q) (UI.bgSearch ||= {}).q = q.value;
+  const el = document.getElementById('lookBox'); if (el) el.outerHTML = lookSection();
+}
 ACT['look-bg'] = (el) => { LOOK.bg = el.dataset.v; saveLook(); refreshLook(); };
 ACT['look-strength'] = (el) => { LOOK.strength = el.dataset.v; saveLook(); refreshLook(); };
+ACT['bg-pick'] = (el) => { const b = UI.bgSearch?.results?.[+el.dataset.i]; if (!b) return; LOOK.custom = b; LOOK.bg = b.id; saveLook(); refreshLook(); };
+ACT['bg-search'] = async () => {
+  const R = (UI.bgSearch ||= {}); const q = (document.getElementById('bgQ')?.value || '').trim(); R.q = q;
+  if (!q) { document.getElementById('bgQ')?.focus(); return; }
+  if (R.busy) return;
+  R.busy = true; R.err = ''; refreshLook();
+  try {
+    R.results = await searchBackgrounds(q);
+    if (!R.results.length) R.err = `No big landscape photos found for “${q}”. Try a simpler word like ocean, forest, city or space.`;
+  } catch { R.results = []; R.err = 'Couldn’t reach Wikimedia right now. Check your connection and try again.'; }
+  R.busy = false; refreshLook();
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target?.id === 'bgQ') { e.preventDefault(); ACT['bg-search'](); } });
 applyLook();
 
 // ═════════════════════════ HOME ═════════════════════════
@@ -1726,6 +1788,8 @@ function openSettings() {
     <div class="field"><span>Gemini model</span><select id="kModel"><option value="auto">Automatic (Lite for quick tasks, Flash for kits &amp; exams)</option>${st.model ? `<option value="${esc(st.model)}" selected>${esc(st.model)}</option>` : ''}</select></div>
     <div class="small muted">On Gemini’s free tier Google may use what you send to improve its products, so don’t upload anything private.</div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="save-settings">Save</button></div>
+    <hr style="border:0;border-top:1px solid var(--border)">
+    ${lookSection()}
     <hr style="border:0;border-top:1px solid var(--border)">
     <h3>Your data</h3><p class="small muted">Your notebooks, pictures and progress are saved privately in this browser on this device. Nobody else can see them, not even the site owner. Clearing this site’s data in your browser erases them, so export a backup now and then (you can import it on another device too).</p>
     <div class="row"><button class="btn" data-act="export">⬇️ Export backup</button><label class="btn" style="position:relative">⬆️ Import backup<input type="file" id="importIn" accept=".json" class="file-hidden"></label></div>
