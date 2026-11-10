@@ -350,7 +350,8 @@ const LOOK = { theme: 'dark', bg: 'grid', strength: 'balanced', custom: null, ow
 try { const saved = JSON.parse(localStorage.getItem(LOOK_KEY) || 'null'); if (saved) Object.assign(LOOK, { bg: saved.bg || 'grid', strength: saved.strength || 'balanced', custom: saved.custom || null, own: saved.own || null, fit: FIT_SIZE[saved.fit] ? saved.fit : 'fill' }); } catch { /* private mode */ }
 const okPhoto = (u) => /^https:\/\/(upload|thumb)\.wikimedia\.org\//.test(String(u || ''));
 const cssUrl = (u) => `url(${String(u).replace(/["'()\\\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})`;
-function findBg(id) { if (id === 'own') return ownBg(); return BGS.find((x) => x.id === id) || (LOOK.custom && LOOK.custom.id === id && okPhoto(LOOK.custom.url) ? LOOK.custom : null); }
+const okBg = (b) => !!b && (okPhoto(b.url) || (b.web && /^https:\/\/\S+$/i.test(String(b.url || ''))));
+function findBg(id) { if (id === 'own') return ownBg(); return BGS.find((x) => x.id === id) || (LOOK.custom && LOOK.custom.id === id && okBg(LOOK.custom) ? LOOK.custom : null); }
 if (LOOK.bg !== 'none' && !findBg(LOOK.bg)) LOOK.bg = 'grid';
 const thumbUrl = (b) => b.thumb || b.url.replace('/1920px-', '/500px-');
 // small preview of a Commons file: …/commons/a/ab/Name.jpg → …/commons/thumb/a/ab/Name.jpg/500px-Name.jpg
@@ -376,7 +377,7 @@ function applyLook() {
   if (b.own && LOOK.own?.kind === 'upload' && !OWN.loaded) { loadOwn().then(() => { if (LOOK.bg === 'own') applyLook(); }); return; }
   if (b.own && !b.url) { LOOK.bg = 'grid'; saveLook(); return; }
   credit.hidden = !!b.own;
-  if (!b.own) credit.hidden = false; credit.href = /^https:\/\/commons\.wikimedia\.org\//.test(b.page || '') ? b.page : 'https://commons.wikimedia.org/';
+  if (!b.own) credit.hidden = false; credit.href = /^https:\/\/commons\.wikimedia\.org\//.test(b.page || '') || (b.web && /^https:\/\//.test(b.page || '')) ? b.page : 'https://commons.wikimedia.org/';
   credit.textContent = `Photo: ${b.by}${b.license && b.license !== 'Public domain' ? ' · ' + b.license : ''}`;
   layer.style.backgroundPosition = b.pos || 'center';
   const key = b.key || b.id;
@@ -384,7 +385,7 @@ function applyLook() {
   layer.dataset.bg = key; layer.classList.remove('ready');
   const img = new Image();
   img.onload = () => { if (layer.dataset.bg !== key) return; layer.style.backgroundImage = cssUrl(b.url); requestAnimationFrame(() => layer.classList.add('ready')); };
-  img.onerror = () => { if (layer.dataset.bg !== key) return; LOOK.bg = 'grid'; saveLook(); refreshLook(); toast('That background couldn’t load, so the grid is back.'); };
+  img.onerror = () => { if (layer.dataset.bg !== key) return; LOOK.bg = 'grid'; saveLook(); refreshLook(); toast(b.web || b.own ? 'That picture’s website won’t share it, so the grid is back. Save the picture and tap Upload a picture instead.' : 'That background couldn’t load, so the grid is back.'); };
   img.src = b.url;
 }
 function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify({ bg: LOOK.bg, strength: LOOK.strength, custom: LOOK.custom, own: LOOK.own, fit: LOOK.fit })); } catch { /* private mode */ } applyLook(); }
@@ -411,7 +412,21 @@ async function commonsSearch(q, cat) {
       license: htmlText(md.LicenseShortName?.value) || 'see source', pos: '50% 50%' };
   }).filter(Boolean);
 }
+// Google Images (through the site's serper.dev key) when it's set up; otherwise free Wikimedia photos.
+async function googleImages(q) {
+  const r = await fetch('/edge/images?q=' + encodeURIComponent(q), { headers: { 'x-encode': '1' } });
+  if (!r.ok) throw new Error('images ' + r.status);
+  const j = await r.json();
+  return (j.images || []).slice(0, 18).map((i, n) => ({ id: 'g' + Date.now().toString(36) + n, web: true, name: i.title || i.source || 'Picture', url: i.url, thumb: i.thumb,
+    page: i.page, by: i.source || 'the web', license: '', pos: '50% 50%' }));
+}
 async function searchBackgrounds(q) {
+  if (S.status?.googleImages) {
+    try { const g = await googleImages(q); if (g.length) return { list: g, source: 'google' }; } catch { /* fall back to Wikimedia */ }
+  }
+  return { list: await wikiBackgrounds(q), source: 'wikimedia' };
+}
+async function wikiBackgrounds(q) {
   let out = await commonsSearch(q, 'Featured_pictures_on_Wikimedia_Commons');
   if (out.length < 6) {
     try { const more = await commonsSearch(q, 'Quality_images'); out = [...out, ...more.filter((m) => !out.some((o) => o.id === m.id))]; } catch { /* keep what we have */ }
@@ -430,7 +445,7 @@ function bgButton(b, act, attrs) {
 function lookSection() {
   const seg = (act, cur, opts) => `<div class="seg">${opts.map(([v, l]) => `<button type="button" class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('')}</div>`;
   const cur = LOOK.bg === 'none' ? null : findBg(LOOK.bg);
-  const custom = LOOK.custom && okPhoto(LOOK.custom.url) ? LOOK.custom : null;
+  const custom = okBg(LOOK.custom) ? LOOK.custom : null;
   const R = UI.bgSearch || {};
   const own = ownBg();
   return `<div class="look" id="lookBox">
@@ -450,12 +465,12 @@ function lookSection() {
       <button type="button" class="btn sm" data-act="bg-search" ${R.busy ? 'disabled' : ''}>${R.busy ? '<span class="spinner"></span> Searching' : '🔎 Search'}</button></div>
     ${R.err ? `<div class="small muted">${esc(R.err)}</div>` : ''}
     ${R.results?.length ? `<div class="bg-grid">${R.results.map((b, i) => bgButton(b, 'bg-pick', `data-i="${i}"`)).join('')}</div>
-      <div class="small muted">Free-to-use photos from Wikimedia Commons. Tap one to use it.</div>` : ''}
-    ${R.done && R.q ? `<div class="bg-google"><a class="btn sm" href="https://www.google.com/search?udm=2&amp;q=${encodeURIComponent(R.q + ' wallpaper')}" target="_blank" rel="noopener">Search Google Images for “${esc(R.q)}” ↗</a>
+      <div class="small muted">${R.source === 'google' ? 'Pictures from Google Images. Tap one to use it. If one won’t load, save it and tap <b>Upload a picture</b>.' : 'Free-to-use photos from Wikimedia Commons. Tap one to use it.'}</div>` : ''}
+    ${R.done && R.q && R.source !== 'google' ? `<div class="bg-google"><a class="btn sm" href="https://www.google.com/search?udm=2&amp;q=${encodeURIComponent(R.q + ' wallpaper')}" target="_blank" rel="noopener">Search Google Images for “${esc(R.q)}” ↗</a>
       <div class="small muted">Games, shows and anything else live there. Open a picture, then copy its image address (long-press on a phone, right-click on a computer) and paste it in the link box above. Or save it and tap <b>Upload a picture</b>.</div></div>` : ''}
     ${cur && !cur.css ? `<div class="row between"><span class="small muted">Picture fit</span>${seg('look-fit', LOOK.fit, [['fill', 'Fill'], ['fit', 'Fit'], ['stretch', 'Stretch']])}</div>
       <div class="row between"><span class="small muted">Photo strength</span>${seg('look-strength', LOOK.strength, [['subtle', 'Subtle'], ['balanced', 'Balanced'], ['vivid', 'Vivid']])}</div>
-      ${cur.own ? '<div class="small muted">Your picture is saved only in this browser. Nobody else sees it.</div>' : `<div class="small muted">“${esc(cur.name)}” by ${esc(cur.by)} (${esc(cur.license)}), <a href="${esc(cur.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>`}` : ''}
+      ${cur.own ? '<div class="small muted">Your picture is saved only in this browser. Nobody else sees it.</div>' : cur.web ? `<div class="small muted">“${esc(cur.name)}” from ${/^https:\/\//.test(cur.page || '') ? `<a href="${esc(cur.page)}" target="_blank" rel="noopener">${esc(cur.by)}</a>` : esc(cur.by)}</div>` : `<div class="small muted">“${esc(cur.name)}” by ${esc(cur.by)} (${esc(cur.license)}), <a href="${esc(cur.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>`}` : ''}
   </div>`;
 }
 function refreshLook() {
@@ -492,8 +507,8 @@ ACT['bg-search'] = async () => {
   if (R.busy) return;
   R.busy = true; R.err = ''; refreshLook();
   try {
-    R.results = await searchBackgrounds(q);
-    if (!R.results.length) R.err = `Wikimedia has no free pictures for “${q}”. Try Google Images below.`;
+    const found = await searchBackgrounds(q); R.results = found.list; R.source = found.source;
+    if (!R.results.length) R.err = found.source === 'google' ? `No pictures found for “${q}”.` : `Wikimedia has no free pictures for “${q}”. Try Google Images below.`;
   } catch { R.results = []; R.err = 'Couldn’t reach Wikimedia right now. Check your connection and try again.'; }
   R.busy = false; R.done = true; refreshLook();
 };

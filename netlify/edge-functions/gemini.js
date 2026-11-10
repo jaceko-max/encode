@@ -5,6 +5,7 @@
 //   POST /edge/gemini?model=…  -> streams Gemini's answer (server-sent events) back to the browser
 //   GET  /edge/fetch?url=…     -> reads a public web page / YouTube oEmbed for "add a link" and the video check
 //   GET  /edge/youtube?q=…     -> optional real YouTube search (needs YOUTUBE_API_KEY)
+//   GET  /edge/images?q=…      -> optional Google Images results for backgrounds (needs SERPER_API_KEY from serper.dev)
 // The key: a visitor's own key (x-user-key header) if they added one in Settings, else GEMINI_API_KEY
 // from Netlify's environment variables. It's never sent to the browser.
 
@@ -34,7 +35,23 @@ export default async (request) => {
   const origin = request.headers.get('origin');
   if (origin && origin !== url.origin) return json({ error: 'Forbidden' }, 403);
 
-  if (route === 'status') return json({ sharedKey: !!siteKey, youtube: !!Netlify.env.get('YOUTUBE_API_KEY') });
+  if (route === 'status') return json({ sharedKey: !!siteKey, youtube: !!Netlify.env.get('YOUTUBE_API_KEY'), images: !!Netlify.env.get('SERPER_API_KEY') });
+
+  if (route === 'images') {
+    // Optional: Google Images results (via serper.dev) for the background picker, if SERPER_API_KEY is set.
+    const sk = Netlify.env.get('SERPER_API_KEY');
+    if (request.headers.get('x-encode') !== '1') return json({ error: 'Forbidden' }, 403);
+    if (!sk) return json({ error: 'No image-search key on this site' }, 501);
+    const q = (url.searchParams.get('q') || '').trim().slice(0, 120);
+    if (!q) return json({ images: [] });
+    const r = await fetch('https://google.serper.dev/images', { method: 'POST', headers: { 'X-API-KEY': sk, 'content-type': 'application/json' }, body: JSON.stringify({ q, num: 30 }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return json({ error: j?.message || `Image search error ${r.status}` }, r.status === 401 || r.status === 403 ? 502 : r.status);
+    const https = (u) => /^https:\/\/\S+$/i.test(String(u || ''));
+    return json({ images: (j.images || []).filter((i) => https(i.imageUrl) && Math.max(i.imageWidth || 0, i.imageHeight || 0) >= 600)
+      .map((i) => ({ title: String(i.title || '').slice(0, 80), url: i.imageUrl, thumb: https(i.thumbnailUrl) ? i.thumbnailUrl : i.imageUrl,
+        w: i.imageWidth || 0, h: i.imageHeight || 0, source: String(i.domain || i.source || '').slice(0, 60), page: https(i.link) ? i.link : '' })) });
+  }
 
   if (route === 'youtube') {
     // Optional: real video search with the YouTube Data API (free, ~100 searches/day), if YOUTUBE_API_KEY is set.

@@ -494,7 +494,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
       const ai = own || !!st.sharedKey;
       let model = LS.get(MODEL_LS);
       if (ai && !model) { try { model = await textModel(); } catch { /* shown when used */ } }
-      return { claude: ai, gemini: ai, backend: 'gemini', public: true, local: true, youtube: !!st.youtube, sharedKey: !!st.sharedKey, ownKey: own, model, offline: false, edgeOffline: !!st.offline };
+      return { claude: ai, gemini: ai, backend: 'gemini', public: true, local: true, youtube: !!st.youtube, googleImages: !!st.images, sharedKey: !!st.sharedKey, ownKey: own, model, offline: false, edgeOffline: !!st.offline };
     }
     if (path === '/api/models') {
       const models = await listModels(true);

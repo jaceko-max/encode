@@ -51,6 +51,11 @@ Netlify Drop (drag a zip) can't run the edge function, so deploy from GitHub:
    2. Create an API key under *Credentials*.
    3. Add it on Netlify as `YOUTUBE_API_KEY`.
    It's free for about 100 searches a day. Without it, video cards open a YouTube search instead.
+7. **Optional: Google Images in the background picker.**
+   1. Sign up at https://serper.dev. The first 2,500 searches are free.
+   2. Copy your API key from the dashboard.
+   3. Add it on Netlify as `SERPER_API_KEY`, then redeploy.
+   Without it, background search uses free Wikimedia photos plus a button that opens Google Images.
 
 **Updating later:** upload the changed files to the same GitHub repo. Netlify redeploys on its own.
 
