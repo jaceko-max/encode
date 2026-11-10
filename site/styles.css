@@ -674,3 +674,9 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .qnav-wrap summary > span:first-child::after { content: " ▾"; }
 .qnav-wrap[open] summary > span:first-child::after { content: " ▴"; }
 .qnav-wrap .qnav { margin-top: 6px; }
+
+/* home clock */
+.home-clock { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; }
+.home-clock b { font: 700 clamp(1.9rem, 7vw, 2.6rem)/1.05 "Chakra Petch", var(--font); font-variant-numeric: tabular-nums; letter-spacing: .01em;
+  background: var(--grad, linear-gradient(135deg, #4f7dff, #3dd6f5)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.home-clock span { color: var(--muted); font-size: .85rem; font-weight: 600; }

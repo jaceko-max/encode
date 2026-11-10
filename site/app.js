@@ -618,7 +618,23 @@ ACT['copy-donate'] = async () => {
   try { await navigator.clipboard.writeText(DONATE_TO); toast('Email copied. Paste it in Zelle 💜'); }
   catch { toast(DONATE_TO); }
 };
+// Live clock with seconds on the home page (only ticks while home is showing)
+const clockParts = (d = new Date()) => ({
+  time: d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
+  date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
+  iso: d.toISOString(),
+});
+function clockHTML() { const c = clockParts(); return `<time class="home-clock" id="homeClock" datetime="${c.iso}"><b>${c.time}</b><span>${c.date}</span></time>`; }
+function startClock() {
+  clearTimeout(UI.clockT); clearInterval(UI.clockI);
+  const tick = () => {
+    const el = document.getElementById('homeClock'); if (!el) { clearInterval(UI.clockI); return; }
+    const c = clockParts(); el.querySelector('b').textContent = c.time; el.querySelector('span').textContent = c.date; el.setAttribute('datetime', c.iso);
+  };
+  UI.clockT = setTimeout(() => { tick(); UI.clockI = setInterval(tick, 1000); }, 1000 - (Date.now() % 1000)); // line up with the real second
+}
 function renderHome() {
+  startClock();
   const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
   const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
   const avgM = nbs.filter((n) => n.digest).map(nbMastery);
@@ -630,6 +646,7 @@ function renderHome() {
   $('#view').innerHTML = `
   <section class="hero">
     <div class="card overview">
+      ${clockHTML()}
       <h1>${greet}${prof().name ? `, ${esc(prof().name)}` : ''} 👋</h1>
       ${prof().name ? '' : '<a class="small hero-name-link" href="#/profile">Add your name and see your rank →</a>'}
       ${nbs.length ? `<p class="muted">${due ? `<b>${due} card${due > 1 ? 's' : ''} due</b> · about ${Math.max(1, Math.round(due * 20 / 60))} min. Clearing them today is what makes it stick.` : 'All caught up ✓ Add your next lecture, or take a practice exam to test yourself.'}</p>`
