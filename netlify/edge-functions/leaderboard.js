@@ -14,8 +14,6 @@ const TZ = 'America/New_York';
 const DAY_CAP = 1500;          // most XP a real study day plausibly earns
 const FIRST_JOIN_CAP = 15000;  // most XP accepted the first time someone joins
 const MIN_GAP_MS = 15000;      // ignore updates more often than this
-// (kept short on purpose: words like "dick" or "cock" would also block real names such as Dickinson or Hancock)
-const BAD = ['fuck', 'shit', 'bitch', 'cunt', 'nigg', 'fagg', 'retard', 'whore', 'slut', 'pussy', 'nazi'];
 
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const nyDate = (d) => d.toLocaleDateString('en-CA', { timeZone: TZ });
@@ -36,8 +34,6 @@ function cleanName(raw) {
   const n = String(raw || '').replace(/\s+/g, ' ').trim();
   if (n.length < 2 || n.length > 20) return { err: 'Use a display name of 2–20 characters.' };
   if (!/^[\p{L}\p{N} ._'’-]+$/u.test(n)) return { err: 'Use letters, numbers, spaces, dots, dashes or apostrophes.' };
-  const flat = n.toLowerCase().replace(/0/g, 'o').replace(/[1!|]/g, 'i').replace(/3/g, 'e').replace(/[4@]/g, 'a').replace(/[5$]/g, 's').replace(/[^a-z]/g, '');
-  if (BAD.some((w) => flat.includes(w))) return { err: 'Please pick a different display name.' };
   return { name: n };
 }
 const num = (x) => (Number.isFinite(+x) ? Math.max(0, Math.floor(+x)) : 0);
