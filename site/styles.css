@@ -680,3 +680,17 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .home-clock b { font: 700 clamp(1.9rem, 7vw, 2.6rem)/1.05 "Chakra Petch", var(--font); font-variant-numeric: tabular-nums; letter-spacing: .01em;
   background: var(--grad, linear-gradient(135deg, #4f7dff, #3dd6f5)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .home-clock span { color: var(--muted); font-size: .85rem; font-weight: 600; }
+
+/* steady scrolling: reserve space while things load, land new videos below the sticky header */
+#map { min-height: 220px; }
+.card.vid { scroll-margin-top: 140px; }
+.card.vid.just-added { box-shadow: 0 0 0 2px var(--accent), 0 0 26px color-mix(in srgb, var(--accent) 35%, transparent); transition: box-shadow .6s; }
+.ill figure img, .shots.one figure img { min-height: 120px; }
+/* pinned tab bar: a full-width strip so page content doesn't show around it */
+.tabs { position: relative; top: auto; z-index: auto; }
+.tabs-bar { position: sticky; top: calc(56px + env(safe-area-inset-top)); z-index: 15; margin: 0 -16px; padding: 0 16px; transition: background-color .15s, box-shadow .15s; }
+@media (pointer: coarse) { .tabs-bar { top: calc(64px + env(safe-area-inset-top)); } }
+.tabs-bar .tabs { margin: 12px 0 18px; }
+.tabs-bar.stuck { background: color-mix(in srgb, var(--bg) 96%, transparent); box-shadow: 0 1px 0 var(--border), 0 8px 18px rgba(0, 0, 0, .35); }
+.tabs-bar.stuck .tabs { margin: 8px 0; }
+@media (hover: none), (max-width: 760px) { .topbar { background: color-mix(in srgb, var(--bg) 99%, transparent); } }

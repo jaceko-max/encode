@@ -385,7 +385,21 @@ function route() {
 const go = (h) => { if (location.hash === h) render(); else location.hash = h; };
 window.addEventListener('hashchange', () => { window.scrollTo(0, 0); render(); });
 
+// Re-drawing the page you're on keeps your place: the old height is held while new content
+// (concept map, pictures) settles, and the scroll position is put back. Moving to a new page starts at the top.
+let lastRenderKey = '';
 function render() {
+  const key = location.hash; const same = key === lastRenderKey; lastRenderKey = key;
+  const view = $('#view'); const y = window.scrollY;
+  if (same && view) { view.style.minHeight = view.offsetHeight + 'px'; clearTimeout(UI.holdT); }
+  try { renderPage(); } finally {
+    if (same && view) {
+      if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+      UI.holdT = setTimeout(() => { view.style.minHeight = ''; }, 2500);
+    }
+  }
+}
+function renderPage() {
   renderTop();
   const r = route();
   if (r.view === 'nb') {
@@ -794,7 +808,7 @@ function renderNotebook(nb, tab, arg) {
       <div class="small muted">${esc(nb.course || '')}${nb.course ? ' · ' : ''}${pct(nbMastery(nb))}% mastery</div></div>
       <button class="icon-btn quiet" data-act="del-nb" data-id="${nb.id}" title="Delete notebook" aria-label="Delete notebook">${icon('trash')}</button>
     </div>
-    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav>
+    <div class="tabs-bar"><nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
     <div id="tab"></div>`;
   const tabsEl = $('.tabs');
   if (tabsEl) {
@@ -802,12 +816,20 @@ function renderNotebook(nb, tab, arg) {
     const on = tabsEl.querySelector('a.on');
     if (on) { tabsEl.style.scrollBehavior = 'auto'; tabsEl.scrollLeft = Math.max(0, on.offsetLeft - (tabsEl.clientWidth - on.offsetWidth) / 2); tabsEl.style.scrollBehavior = ''; }
     fades(); tabsEl.addEventListener('scroll', fades, { passive: true });
+    // solid strip behind the tabs once they're pinned under the header
+    UI.tabsIO?.disconnect(); const head = $('.nb-head'); const bar = tabsEl.parentElement;
+    if (head && bar && 'IntersectionObserver' in window) { UI.tabsIO = new IntersectionObserver(([e]) => bar.classList.toggle('stuck', !e.isIntersecting), { rootMargin: '-72px 0px 0px 0px' }); UI.tabsIO.observe(head); }
   }
   $('#nbTitleEdit').addEventListener('change', async (e) => { nb.title = e.target.value.trim() || 'Untitled notebook'; await save(nb); });
   const needsKit = KIT_TABS.includes(tab) && !nb.digest;
   const el = $('#tab');
   if (needsKit) return renderNeedKit(nb, el);
   ({ sources: renderSources, pretest: renderPretest, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress }[tab] || renderSources)(nb, el, arg);
+  if (tab === 'videos' && UI.vidFocus) {
+    const id = UI.vidFocus; UI.vidFocus = null;
+    const card = [...el.querySelectorAll('[data-vid]')].find((x) => x.dataset.vid === String(id));
+    if (card) { card.classList.add('just-added'); setTimeout(() => card.classList.remove('just-added'), 2500); requestAnimationFrame(() => card.scrollIntoView({ block: 'start', behavior: 'smooth' })); lastRenderKey = ''; }
+  }
   if (tab === 'learn' && nb.digest) el.insertAdjacentHTML('beforeend', `<div class="card overview row between learn-next"><div><h3 style="margin:0">Done reading?</h3><div class="small muted">Now pull it back out of your head. That’s what makes it stick.</div></div><a class="btn primary" href="#/nb/${nb.id}/recall">🧠 Start recall →</a></div>`);
 }
 function renderNeedKit(nb, el) {
@@ -1338,7 +1360,7 @@ const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + 
 ACT.illustrate = async (el) => {
   const nb = curNb(); const c = nb.digest.concepts.find((x) => x.id === el.dataset.cid); const style = el.dataset.style; const key = `${c.id}:${style}`;
   if (!S.status.claude && !S.status.gemini) { toast('Illustrations need the AI tutor — see Settings', 'err'); return openSettings(); }
-  (UI.illBusy ||= {})[key] = true; render(); $(`#concept-${c.id}`)?.scrollIntoView({ block: 'center' });
+  (UI.illBusy ||= {})[key] = true; render(); $(`#concept-${c.id}`)?.scrollIntoView({ block: 'nearest' });
   try {
     const r = await api('/api/illustrate', { ...c, style, sources: style === 'diagram' ? aiSources(nb) : [] });
     if (r.kind === 'svg' && !r.svg) throw new Error('The drawing came back empty. Try again.');
@@ -1346,7 +1368,7 @@ ACT.illustrate = async (el) => {
     if (r.note) toast(r.note);
     await gainXP(3, 'visual');
   } catch (e) { aiError(e); }
-  delete UI.illBusy[key]; render(); $(`#concept-${c.id}`)?.scrollIntoView({ block: 'center' });
+  delete UI.illBusy[key]; render(); $(`#concept-${c.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 };
 ACT['zoom-ill'] = (el) => {
   const nb = curNb(); const v = nb.illustrations[el.dataset.key];
@@ -1382,7 +1404,9 @@ async function drawMap(nb) {
   groups.forEach((g, i) => { const [f, s] = GROUP_COLORS[i % GROUP_COLORS.length]; code += `  classDef g${i} fill:${f},stroke:${s},color:#1c1b2e,stroke-width:1.5px\n`; });
   map.nodes.forEach((n) => { code += `  class ${safeId(n.id)} g${groups.indexOf(n.group)}\n`; });
   try {
-    const { svg } = await mermaid.render('cmap' + Date.now(), code);
+    let svg;
+    if (UI.mapCache?.code === code) svg = UI.mapCache.svg; // same map: draw it back right away
+    else { svg = (await mermaid.render('cmap' + Date.now(), code)).svg; UI.mapCache = { code, svg }; if (!host.isConnected) return drawMap(nb); }
     host.innerHTML = svg + `<div class="row small muted" style="margin-top:8px">${groups.map((g, i) => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${GROUP_COLORS[i % GROUP_COLORS.length][0]};border:1px solid ${GROUP_COLORS[i % GROUP_COLORS.length][1]}"></span> ${esc(g)}</span>`).join('')}</div>`;
   } catch (e) { host.innerHTML = `<p class="muted">Couldn’t draw the map (${esc(e.message)}).</p>`; return; }
   if (!blanks) return;
@@ -1790,7 +1814,7 @@ function videoCard(nb, v) {
   if (v.search) return searchCard(nb, v);
   const playing = UI.vidPlay === v.id;
   const tp = nb.digest.feynman_prompts?.findIndex((p) => p.concept_id === v.concept_id) ?? -1;
-  return `<div class="card vid ${v.watched ? 'watched' : ''}">
+  return `<div class="card vid ${v.watched ? 'watched' : ''}" data-vid="${esc(v.id)}">
     <div class="vid-frame">${playing
       ? `<iframe src="https://www.youtube-nocookie.com/embed/${esc(v.id)}?autoplay=1&rel=0&modestbranding=1" title="${esc(v.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`
       : `<button class="vid-thumb" data-act="vid-play" data-id="${esc(v.id)}" aria-label="Play ${esc(v.title)}"><img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(v.id)}/hqdefault.jpg"><span class="vid-play">▶</span>${v.watched ? '<span class="vid-done">✓ Watched</span>' : ''}</button>`}</div>
@@ -1810,7 +1834,7 @@ function videoCard(nb, v) {
 function searchCard(nb, v) {
   const tp = nb.digest.feynman_prompts?.findIndex((p) => p.concept_id === v.concept_id) ?? -1;
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(v.query)}`;
-  return `<div class="card vid ${v.watched ? 'watched' : ''}">
+  return `<div class="card vid ${v.watched ? 'watched' : ''}" data-vid="${esc(v.id)}">
     <a class="vid-search" href="${url}" target="_blank" rel="noopener"><span class="vid-search-icon">▶</span><span>🔎 Find on YouTube</span><b>“${esc(v.query)}”</b>${v.watched ? '<span class="vid-done">✓ Watched</span>' : ''}</a>
     <div class="stack" style="gap:6px">
       <div class="small muted">${v.level ? esc(v.level) + ' · ' : ''}pick one of the top results</div>
@@ -1846,7 +1870,7 @@ async function findVideos(nb, { focus = '', cid = '', weak = false, label = '' }
       have: nb.videos.map((v) => v.id), haveTopics: nb.videos.map((v) => v.query || v.title).slice(-30),
     });
     const fresh = (r.videos || []).filter((v) => !nb.videos.some((x) => x.id === v.id)).map((v) => ({ ...v, concept_id: c ? c.id : v.concept_id, added: Date.now(), watched: false }));
-    nb.videos.push(...fresh); await save(nb);
+    nb.videos.push(...fresh); await save(nb); if (fresh.length) UI.vidFocus = fresh[0].id;
     toast(fresh.length ? `Added ${fresh.length} video${fresh.length === 1 ? '' : 's'} ✓` : 'Nothing new found. Try a different search', fresh.length ? '' : 'err');
   } catch (e) { aiError(e); }
   UI.vidBusy = null;
