@@ -163,7 +163,7 @@ function pushSummary() {
       .sort((a, b) => a.mastery - b.mastery).slice(0, 3);
     const nextDue = nbs.flatMap((nb) => nb.cards.map((c) => c.srs.due)).filter((t) => t > Date.now()).sort((a, b) => a - b)[0] || null;
     const body = {
-      updated: Date.now(), streak: streak(), studiedToday: !!S.meta.days[dayKey()], xp: S.meta.xp, level: level(),
+      updated: Date.now(), streak: streak(), studiedToday: !!S.meta.days[dayKey()], xp: S.meta.xp, level: level(), rank: rankInfo().label,
       due: nbs.reduce((a, n) => a + dueCards(n).length, 0), nextDue,
       days: Object.keys(S.meta.days).sort().slice(-90),
       notebooks: nbs.slice(0, 6).map((nb) => ({ id: nb.id, title: nb.title, course: nb.course, due: dueCards(nb).length, dues: nb.cards.map((c) => c.srs.due), mastery: Math.round(nbMastery(nb) * 100), next: nextStep(nb).label, nextTab: nextStep(nb).tab })),
@@ -174,8 +174,84 @@ function pushSummary() {
 }
 
 // XP, levels, streaks
-const LEVEL_XP = 250;
-function level() { return Math.floor(S.meta.xp / LEVEL_XP) + 1; }
+// ───────────── Ranks: XP climbs a crystal ladder. Each step unlocks something cosmetic (studying is never locked). ─────────────
+const RANKS = [
+  { id: 'shard', name: 'Shard', c: '#aab6cc', step: 100 },
+  { id: 'quartz', name: 'Quartz', c: '#ff9cc8', step: 150 },
+  { id: 'topaz', name: 'Topaz', c: '#f7b94a', step: 200 },
+  { id: 'amethyst', name: 'Amethyst', c: '#b18cff', step: 300 },
+  { id: 'sapphire', name: 'Sapphire', c: '#4f8dff', step: 400 },
+  { id: 'emerald', name: 'Emerald', c: '#34d98a', step: 500 },
+  { id: 'ruby', name: 'Ruby', c: '#ff5470', step: 650 },
+  { id: 'diamond', name: 'Diamond', c: '#c9f6ff', step: 800 },
+  { id: 'prism', name: 'Prism', c: '#e0e7ff', top: true },
+];
+const TIERS = (() => { const out = []; let xp = 0; RANKS.forEach((r, ri) => { if (r.top) { out.push({ ri, tier: 0, min: xp }); return; } for (let t = 1; t <= 3; t++) { out.push({ ri, tier: t, min: xp }); xp += r.step; } }); return out; })();
+function tierAt(xp) { let i = 0; while (i + 1 < TIERS.length && xp >= TIERS[i + 1].min) i++; return i; }
+const tierLabel = (i) => { const t = TIERS[i]; const r = RANKS[t.ri]; return r.top ? r.name : `${r.name} ${t.tier}`; };
+function rankInfo(xp = S.meta.xp) {
+  const i = tierAt(xp); const t = TIERS[i]; const nx = TIERS[i + 1];
+  return { i, r: RANKS[t.ri], ri: t.ri, tier: t.tier, label: tierLabel(i), into: xp - t.min, need: nx ? nx.min - t.min : 0, next: !!nx, nextLabel: nx ? tierLabel(i + 1) : '' };
+}
+function level() { return tierAt(S.meta.xp) + 1; } // kept for the dashboard summary
+const PRISM_GRAD = 'linear-gradient(120deg, #ff5f8f, #ffd166, #5cf28a, #5ff2ff, #a78bfa)';
+const THEMES = [
+  { id: 'crystal', name: 'Crystal', g1: '#4f7dff', g2: '#3dd6f5', a: '#4fa8ff', at: 0 },
+  { id: 'quartz', name: 'Rose Quartz', g1: '#ff7eb6', g2: '#ffc2dc', a: '#ff9cc8', at: 3 },
+  { id: 'topaz', name: 'Topaz', g1: '#f59e0b', g2: '#fde68a', a: '#fbbf24', at: 6 },
+  { id: 'amethyst', name: 'Amethyst', g1: '#a78bfa', g2: '#e9d5ff', a: '#c4b5fd', at: 9 },
+  { id: 'sapphire', name: 'Sapphire', g1: '#3b82f6', g2: '#93c5fd', a: '#60a5fa', at: 12 },
+  { id: 'emerald', name: 'Emerald', g1: '#10b981', g2: '#6ee7b7', a: '#34d399', at: 15 },
+  { id: 'ruby', name: 'Ruby', g1: '#fb3b5c', g2: '#fda4af', a: '#fb7185', at: 18 },
+  { id: 'diamond', name: 'Diamond', g1: '#a5f3fc', g2: '#ffffff', a: '#cffafe', at: 21 },
+  { id: 'prism', name: 'Prism', g1: '#ff5f8f', g2: '#5ff2ff', a: '#a5b4fc', at: 24, prism: true },
+];
+const TITLES = [
+  { id: 'fresh', name: 'Fresh Mind', at: 0 }, { id: 'notes', name: 'Note Taker', at: 1 }, { id: 'flipper', name: 'Card Flipper', at: 4 },
+  { id: 'pretest', name: 'Pretest Pro', at: 7 }, { id: 'recall', name: 'Recall Machine', at: 10 }, { id: 'mapper', name: 'Concept Mapper', at: 13 },
+  { id: 'teacher', name: 'Teach-Back Star', at: 16 }, { id: 'slayer', name: 'Exam Slayer', at: 19 }, { id: 'palace', name: 'Memory Palace', at: 22 },
+  { id: 'prism', name: 'Prism Mind', at: 24 },
+];
+const PLATES = [{ id: 'basic', name: 'Basic', at: 0, style: 'basic' },
+  ...RANKS.map((r, ri) => ({ id: r.id, name: `${r.name} nameplate`, ri, at: r.top ? 24 : ri * 3 + 2, style: r.top ? 'prism' : ri >= 6 ? 'shine' : ri >= 3 ? 'glow' : 'line' }))];
+const owned = (item) => tierAt(S.meta.xp) >= item.at;
+function unlocksAt(i) {
+  if (!i) return [];
+  return [...THEMES.filter((t) => t.at === i).map((t) => `${t.name} theme`), ...TITLES.filter((t) => t.at === i).map((t) => `title “${t.name}”`),
+    ...PLATES.filter((p) => p.at === i).map((p) => p.name)];
+}
+const prof = () => (S.meta.profile ||= { name: '', title: 'fresh', theme: 'crystal', plate: 'basic' });
+const myTheme = () => { const t = THEMES.find((x) => x.id === prof().theme); return t && owned(t) ? t : THEMES[0]; };
+const myTitle = () => { const t = TITLES.find((x) => x.id === prof().title); return t && owned(t) ? t : TITLES[0]; };
+const myPlate = () => { const p = PLATES.find((x) => x.id === prof().plate); return p && owned(p) ? p : PLATES[0]; };
+let themeKey = '';
+function applyTheme() {
+  const t = myTheme(); if (themeKey === t.id) return; themeKey = t.id;
+  const st = document.documentElement.style;
+  st.setProperty('--grad', t.prism ? PRISM_GRAD : `linear-gradient(135deg, ${t.g1}, ${t.g2})`);
+  st.setProperty('--accent', t.a); st.setProperty('--accent-2', t.a); st.setProperty('--glow-tint', t.g1);
+}
+let EMB = 0;
+function emblem(i = tierAt(S.meta.xp), size = 20) {
+  const t = TIERS[i]; const r = RANKS[t.ri]; const id = 'emb' + (++EMB);
+  const grad = r.top
+    ? `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5f8f"/><stop offset=".35" stop-color="#ffd166"/><stop offset=".65" stop-color="#5cf28a"/><stop offset="1" stop-color="#5ff2ff"/></linearGradient>`
+    : `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".42" stop-color="${r.c}"/><stop offset="1" stop-color="${r.c}" stop-opacity=".55"/></linearGradient>`;
+  const pips = r.top ? '' : [...Array(t.tier)].map((_, k) => { const x = 32 + (k - (t.tier - 1) / 2) * 11; return `<path d="M${x} 60l4.5 4.5-4.5 4.5-4.5-4.5z" fill="${r.c}"/>`; }).join('');
+  return `<svg class="emblem" width="${size}" height="${Math.round(size * 72 / 64)}" viewBox="0 0 64 72" aria-hidden="true"><defs>${grad}</defs>
+    <path d="M32 4 54 20 46 54H18L10 20Z" fill="url(#${id})" stroke="rgba(255,255,255,.6)" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M10 20 22 24 32 4 42 24 54 20M22 24 18 54M42 24 46 54M22 24H42" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M22 24 32 54 42 24" fill="none" stroke="rgba(0,0,0,.2)" stroke-width="1.2" stroke-linejoin="round"/>${pips}</svg>`;
+}
+function rankUp(i) {
+  confetti();
+  const u = unlocksAt(i);
+  const el = document.createElement('div'); el.className = 'rankup'; el.setAttribute('role', 'status');
+  el.innerHTML = `${emblem(i, 54)}<div class="spacer"><div class="rankup-k">RANK UP</div><b>${esc(tierLabel(i))}</b>${u.length ? `<div class="small">Unlocked: ${u.map(esc).join(', ')}</div>` : ''}</div>
+    <a class="btn sm" href="#/profile">View</a><button type="button" class="icon-btn quiet" aria-label="Close">✕</button>`;
+  el.querySelectorAll('a, button').forEach((b) => b.addEventListener('click', () => el.remove()));
+  document.body.appendChild(el); setTimeout(() => el.remove(), 9000);
+}
 function streak() {
   let n = 0; const d = new Date();
   if (!S.meta.days[dayKey(d)]) d.setDate(d.getDate() - 1); // today not studied yet → count up to yesterday
@@ -184,14 +260,15 @@ function streak() {
 }
 async function gainXP(n, label) {
   if (!n) return;
-  const before = level(); const k = dayKey();
+  const before = tierAt(S.meta.xp); const k = dayKey();
   const wasFirstToday = !S.meta.days[k];
   S.meta.xp += n; S.meta.days[k] = (S.meta.days[k] || 0) + n;
   await saveMeta();
   toast(`+${n} XP${label ? ' · ' + label : ''}`, 'xp');
   if (wasFirstToday && streak() > 1) setTimeout(() => toast(`🔥 ${streak()}-day streak!`), 600);
-  if (level() > before) setTimeout(() => { toast(`⭐ Level ${level()} reached!`, 'xp'); confetti(); }, 900);
+  if (tierAt(S.meta.xp) > before) { const now = tierAt(S.meta.xp); setTimeout(() => rankUp(now), 900); }
   renderTop();
+  if (route().view === 'home' || route().view === 'profile') render(); // keep the rank tile / profile current
 }
 
 // Concept mastery (fed by every graded attempt in every mode)
@@ -253,10 +330,10 @@ async function refreshStatus() {
 
 // ───────────────────────── chrome: top bar, toasts, modal ─────────────────────────
 function renderTop() {
-  const xpIn = S.meta.xp % LEVEL_XP;
+  applyTheme(); const rk = rankInfo();
   $('#topStats').innerHTML = `
     <span class="chip" title="Study streak">${icon('flame').replace('class="ico"', 'class="ico flame"')} ${streak()}</span>
-    <span class="chip" title="${S.meta.xp} XP total">${icon('star').replace('class="ico"', 'class="ico star"')} Lv ${level()} <span class="bar"><i style="width:${pct(xpIn / LEVEL_XP)}%"></i></span></span>`;
+    <a class="chip rank-chip" href="#/profile" title="${S.meta.xp} XP · your rank and profile">${emblem(rk.i, 16)} ${esc(rk.label)} <span class="bar"><i style="width:${rk.next ? pct(rk.into / rk.need) : 100}%"></i></span></a>`;
 }
 function renderBanner() {
   const st = S.status;
@@ -291,6 +368,7 @@ function route() {
   const p = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (p[0] === 'nb' && p[1]) return { view: 'nb', id: p[1], tab: p[2] || '', arg: p[3] || '' };
   if (p[0] === 'course' && p[1]) return { view: 'course', course: p[1] };
+  if (p[0] === 'profile') return { view: 'profile' };
   return { view: 'home' };
 }
 const go = (h) => { if (location.hash === h) render(); else location.hash = h; };
@@ -305,6 +383,7 @@ function render() {
     return renderNotebook(nb, r.tab || nextStep(nb).tab, r.arg);
   }
   if (r.view === 'course') return renderCourse(r.course);
+  if (r.view === 'profile') return renderProfile();
   renderHome();
 }
 
@@ -540,7 +619,8 @@ function renderHome() {
   $('#view').innerHTML = `
   <section class="hero">
     <div class="card overview">
-      <h1>${greet} 👋</h1>
+      <h1>${greet}${prof().name ? `, ${esc(prof().name)}` : ''} 👋</h1>
+      ${prof().name ? '' : '<a class="small hero-name-link" href="#/profile">Add your name and see your rank →</a>'}
       <p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>
       <p class="small muted" style="margin:-4px 0 12px">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
       <div class="row">
@@ -552,7 +632,7 @@ function renderHome() {
     <div class="card">
       <div class="stat-grid">
         <div class="stat"><b>🔥 ${streak()}</b><span>day streak</span></div>
-        <div class="stat"><b>⭐ ${level()}</b><span>level · ${S.meta.xp} XP</span></div>
+        <a class="stat rank-stat" href="#/profile"><b>${emblem(tierAt(S.meta.xp), 22)} ${esc(rankInfo().label)}</b><span>rank · ${S.meta.xp.toLocaleString()} XP</span></a>
         <div class="stat"><b>${due}</b><span>cards due</span></div>
         <div class="stat"><b>${avgM.length ? pct(avgM.reduce((a, b) => a + b, 0) / avgM.length) + '%' : '—'}</b><span>avg mastery</span></div>
       </div>
@@ -1435,7 +1515,13 @@ ACT['rc-self'] = (el) => {
 };
 ACT['rc-override'] = (el) => { UI.recall.result.verdict = el.dataset.v; UI.recall.result.feedback = 'Marked by you.'; UI.recall.result.missing = []; render(); };
 ACT['rc-next'] = async () => {
-  const R = UI.recall; const { nb, card } = recallItem(R); const v = R.result.verdict;
+  const R = UI.recall; if (!R || R.advancing || !R.result?.verdict) return;
+  R.advancing = true;
+  try { await recallApply(R); } finally { R.advancing = false; }
+  render();
+};
+async function recallApply(R) {
+  const { nb, card } = recallItem(R); const v = R.result.verdict;
   schedule(card, v, R.conf); record(nb, card.concept_id, v === 'correct' ? (R.conf === 'guess' ? 0.6 : 1) : v === 'partial' ? 0.5 : 0);
   nb.progress.reviews++; R.tally[v]++;
   if (v === 'incorrect' && R.conf === 'sure') R.confMistakes++;
@@ -1443,9 +1529,13 @@ ACT['rc-next'] = async () => {
   if (v === 'incorrect' && !R.requeued?.[card.id]) { (R.requeued ||= {})[card.id] = 1; R.queue.push({ nb: nb.id, card: card.id }); } // see it again this session
   const xp = v === 'correct' ? 10 : v === 'partial' ? 5 : 2; R.xp += xp;
   await save(nb); await gainXP(xp);
-  R.i++; R.result = null; R.draft = ''; R.conf = null; render();
+  R.i++; R.result = null; R.draft = ''; R.conf = null;
+}
+ACT['rc-quit'] = async () => {
+  const R = UI.recall; if (!R || R.advancing) return;
+  if (R.result?.verdict) { R.advancing = true; try { await recallApply(R); } finally { R.advancing = false; } } // keep the answer that's on screen
+  R.queue = R.queue.slice(0, R.i); render();
 };
-ACT['rc-quit'] = () => { const R = UI.recall; R.queue = R.queue.slice(0, R.i); render(); };
 function recallDone(el) {
   const R = UI.recall; const t = R.tally; const total = t.correct + t.partial + t.incorrect;
   if (total >= 3 && t.correct / total >= 0.8 && !R.cheered) { R.cheered = true; setTimeout(confetti, 150); }
@@ -1867,6 +1957,63 @@ function renderProgress(nb, el) {
         <div class="meter"><i style="width:${pct(m ?? 0)}%;${m !== null && m < 0.4 ? 'background:var(--bad)' : ''}"></i></div><span class="small">${m === null ? '—' : pct(m) + '%'}</span>
         <a class="btn sm" href="#/nb/${nb.id}/recall/${c.id}">Drill</a></div>`).join('')}</div></div>`;
 }
+
+// ═════════════════════════ PROFILE & RANK ═════════════════════════
+const XP_RULES = [['Recall answer: right / partly / tried', '+10 / +5 / +2'], ['Teach back', '+12 to +20'], ['Practice exam', '+10, plus up to +10 a question'],
+  ['Pretest', '+5, plus +5 a guess'], ['Watch a video with its questions', '+10'], ['Concept map blank', '+5'], ['New diagram or picture', '+3'], ['Tutor chat reply', '+2']];
+function renderProfile() {
+  const P = prof(); const rk = rankInfo(); const plate = myPlate(); const title = myTitle();
+  let nextU = null; for (let i = rk.i + 1; i < TIERS.length; i++) { const u = unlocksAt(i); if (u.length) { nextU = { i, u }; break; } }
+  const lockNote = (at) => `🔒 ${esc(tierLabel(at))}`;
+  $('#view').innerHTML = `
+  <a href="#/" class="small">← Home</a>
+  <section class="card profile-head plate plate-${plate.style}" style="--pc:${plate.ri !== undefined ? RANKS[plate.ri].c : 'var(--border)'}">
+    <div class="emb-big">${emblem(rk.i, 96)}</div>
+    <div class="spacer stack" style="gap:6px;min-width:0">
+      <input class="name-input" id="profName" maxlength="24" placeholder="Tap to add your name" value="${esc(P.name)}" aria-label="Your name" autocomplete="nickname">
+      <div class="p-title">${esc(title.name)}</div>
+      <div class="p-rank"><b style="color:${rk.r.top ? 'var(--accent)' : rk.r.c}">${esc(rk.label)}</b> · ${S.meta.xp.toLocaleString()} XP</div>
+      <div class="meter rr"><i style="width:${rk.next ? pct(rk.into / rk.need) : 100}%"></i></div>
+      <div class="small muted">${rk.next ? `${rk.into} / ${rk.need} XP to <b>${esc(rk.nextLabel)}</b>` : 'You reached the top rank. Legendary. 💎'}</div>
+      ${nextU ? `<div class="small">Next unlock at <b>${esc(tierLabel(nextU.i))}</b>: ${nextU.u.map(esc).join(', ')}</div>` : ''}
+    </div>
+  </section>
+  <section class="card stack"><h2>Customize</h2>
+    <div class="small muted">Theme (buttons, tabs and glow)</div>
+    <div class="swatches">${THEMES.map((t) => `<button type="button" class="swatch ${myTheme().id === t.id ? 'on' : ''} ${owned(t) ? '' : 'locked'}" data-act="prof-theme" data-v="${t.id}" style="--sw:${t.prism ? PRISM_GRAD : `linear-gradient(135deg, ${t.g1}, ${t.g2})`}"><i></i><span>${owned(t) ? esc(t.name) : lockNote(t.at)}</span></button>`).join('')}</div>
+    <div class="small muted">Title</div>
+    <div class="chips">${TITLES.map((t) => `<button type="button" class="${title.id === t.id ? 'on' : ''} ${owned(t) ? '' : 'locked'}" data-act="prof-title" data-v="${t.id}">${owned(t) ? esc(t.name) : `${lockNote(t.at)} · ${esc(t.name)}`}</button>`).join('')}</div>
+    <div class="small muted">Nameplate</div>
+    <div class="plates">${PLATES.map((p) => `<button type="button" class="plate-opt plate plate-${p.style} ${plate.id === p.id ? 'on' : ''} ${owned(p) ? '' : 'locked'}" data-act="prof-plate" data-v="${p.id}" style="--pc:${p.ri !== undefined ? RANKS[p.ri].c : 'var(--border)'}">${owned(p) ? esc(p.name.replace(' nameplate', '')) : lockNote(p.at)}</button>`).join('')}</div>
+  </section>
+  <section class="card stack"><h2>Rank road</h2>
+    <p class="small muted" style="margin:0">Every rank has 3 tiers. Tier 1 unlocks a theme, tier 2 a title, tier 3 a nameplate.</p>
+    <div class="road">${RANKS.map((r, ri) => {
+      const first = TIERS.findIndex((t) => t.ri === ri); const here = rk.ri === ri; const got = rk.i >= first;
+      const rewards = r.top ? unlocksAt(first) : [0, 1, 2].map((k) => unlocksAt(first + k)).flat();
+      return `<div class="road-row ${here ? 'here' : ''} ${got ? '' : 'locked'}">${emblem(r.top ? first : first + (here ? rk.tier - 1 : 0), 34)}
+        <div class="spacer"><b style="color:${r.top ? 'var(--text)' : r.c}">${esc(r.name)}</b>${here ? ' <span class="tag accent">you are here</span>' : ''}
+        <div class="small muted">${TIERS[first].min.toLocaleString()} XP${r.top ? '+' : ` – ${(TIERS[first + 2].min + r.step - 1).toLocaleString()} XP`}</div>
+        <div class="small">${rewards.map(esc).join(' · ') || 'Your starting rank'}</div></div></div>`;
+    }).join('')}</div>
+  </section>
+  <section class="card stack"><h2>How to earn XP</h2>
+    <table class="xp-table">${XP_RULES.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join('')}</table>
+    <p class="small muted" style="margin:0">Your rank and XP live in this browser with your notebooks, and they’re included in backups.</p>
+  </section>`;
+  $('#profName').addEventListener('change', async (e) => {
+    P.name = e.target.value.replace(/\s+/g, ' ').trim().slice(0, 24); await saveMeta();
+    toast(P.name ? `Nice to meet you, ${P.name} 👋` : 'Name removed'); renderTop();
+  });
+}
+function profPick(kind, list, el) {
+  const item = list.find((x) => x.id === el.dataset.v); if (!item) return;
+  if (!owned(item)) { const need = TIERS[item.at].min - S.meta.xp; toast(`🔒 Unlocks at ${tierLabel(item.at)} (${need.toLocaleString()} XP to go)`); return; }
+  prof()[kind] = item.id; saveMeta(); applyTheme(); render();
+}
+ACT['prof-theme'] = (el) => profPick('theme', THEMES, el);
+ACT['prof-title'] = (el) => profPick('title', TITLES, el);
+ACT['prof-plate'] = (el) => profPick('plate', PLATES, el);
 
 // ═════════════════════════ SETTINGS ═════════════════════════
 function openSettings() {
