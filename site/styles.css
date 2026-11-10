@@ -650,3 +650,27 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .rankup b { font: 700 1.2rem "Chakra Petch", var(--font); }
 @keyframes rankup-in { from { opacity: 0; transform: translate(-50%, -16px) scale(.96); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .rankup { animation: none; } }
+
+/* ═════════════ new-student walkthrough fixes ═════════════ */
+.how h2 { margin-bottom: 10px; }
+.how-steps { margin: 0; padding: 0; list-style: none; counter-reset: how; display: grid; gap: 12px; }
+.how-steps li { counter-increment: how; display: grid; grid-template-columns: 34px 1fr; gap: 2px 12px; align-items: start; }
+.how-steps li::before { content: counter(how); grid-row: span 2; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  font: 700 .95rem "Chakra Petch", var(--font); color: var(--accent-text); background: var(--grad, linear-gradient(135deg, #4f7dff, #3dd6f5)); }
+.how-steps span { color: var(--muted); font-size: .88rem; }
+.build-bar { max-width: 320px; margin: 14px auto 4px; height: 8px; }
+.build-bar i { width: 92%; animation: build-fill ease-out forwards; background: var(--grad, linear-gradient(90deg, #4f7dff, #3dd6f5)); }
+@keyframes build-fill { from { width: 3%; } to { width: 92%; } }
+.tabs a.needs-kit:not(.on) { opacity: .45; }
+/* the tab bar stays reachable on long pages */
+.tabs { position: sticky; top: calc(56px + env(safe-area-inset-top)); z-index: 15; background-color: color-mix(in srgb, var(--surface) 96%, transparent); }
+@media (pointer: coarse) { .tabs { top: calc(64px + env(safe-area-inset-top)); } }
+.concept-acts { gap: 6px; }
+.learn-next { margin-top: 16px; }
+/* exam: compact question list */
+.qnav-wrap { margin: 0; }
+.qnav-wrap summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer; list-style: none; padding: 6px 2px; font-weight: 600; color: var(--muted); font-size: .9rem; }
+.qnav-wrap summary::-webkit-details-marker { display: none; }
+.qnav-wrap summary > span:first-child::after { content: " ▾"; }
+.qnav-wrap[open] summary > span:first-child::after { content: " ▴"; }
+.qnav-wrap .qnav { margin-top: 6px; }

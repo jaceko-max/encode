@@ -18,6 +18,17 @@ function md(text) {
 const STOP = new Set('the a an and or of to in on for with is are was were be by as at it its that this from into than then which who what when how why your you their they them our not but can will has have had do does did'.split(' '));
 function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 function words(s) { return norm(s).split(' ').filter((w) => w.length > 2 && !STOP.has(w)); }
+const wordCount = (s) => (String(s || '').match(/\S+/g) || []).length;
+const TOUCH = (() => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } })();
+// AI text: show typed arrows as real arrows
+const tx = (s) => esc(s).replace(/-&gt;/g, '→').replace(/&lt;-(?!-)/g, '←');
+// "Source 1"-style labels mean nothing to a student: show the source's name, or nothing for a one-source notebook
+function refLabel(nb, ref) {
+  const m = String(ref || '').match(/^\s*source\s*(\d+)\s*$/i); if (!m) return String(ref || '');
+  const srcs = (nb.sources || []).filter((s) => s.kind !== 'guide'); if (srcs.length <= 1) return '';
+  return String(srcs[+m[1] - 1]?.name || '').slice(0, 28);
+}
+const CARD_KIND = { define: 'Define it', explain: 'Explain why', compare: 'Compare', apply: 'Apply it', sequence: 'Put in order' };
 function lev(a, b) {
   const m = a.length, n = b.length; if (!m) return n; if (!n) return m;
   let prev = Array.from({ length: n + 1 }, (_, i) => i);
@@ -621,15 +632,23 @@ function renderHome() {
     <div class="card overview">
       <h1>${greet}${prof().name ? `, ${esc(prof().name)}` : ''} 👋</h1>
       ${prof().name ? '' : '<a class="small hero-name-link" href="#/profile">Add your name and see your rank →</a>'}
-      <p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>
-      <p class="small muted" style="margin:-4px 0 12px">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
+      ${nbs.length ? `<p class="muted">${due ? `<b>${due} card${due > 1 ? 's' : ''} due</b> · about ${Math.max(1, Math.round(due * 20 / 60))} min. Clearing them today is what makes it stick.` : 'All caught up ✓ Add your next lecture, or take a practice exam to test yourself.'}</p>`
+        : '<p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>'}
+      <p class="small muted" style="margin:-4px 0 12px;${nbs.length ? 'display:none' : ''}">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
       <div class="row">
         ${due ? `<button class="btn primary lg" data-act="review-all">Review ${due} due card${due > 1 ? 's' : ''}</button>` : ''}
         <button class="btn ${due ? '' : 'primary lg'}" data-act="new-nb">＋ New notebook</button>
         ${nbs.some((n) => n.sample) ? '' : '<button class="btn ghost" data-act="sample">Try a sample lecture</button>'}
       </div>
     </div>
-    <div class="card">
+    ${nbs.length ? '' : `<div class="card how">
+      <h2>How it works</h2>
+      <ol class="how-steps">
+        <li><b>Add a lecture</b><span>Slides, a PDF, your notes, photos of the board or a YouTube link.</span></li>
+        <li><b>Build your study kit</b><span>About 30 seconds: visual cards, a concept map, flashcards and a pretest.</span></li>
+        <li><b>Study by recalling</b><span>Answer from memory, teach it back, take practice exams. Earn XP and rank up.</span></li>
+      </ol></div>`}
+    <div class="card" style="${nbs.length ? '' : 'display:none'}">
       <div class="stat-grid">
         <div class="stat"><b>🔥 ${streak()}</b><span>day streak</span></div>
         <a class="stat rank-stat" href="#/profile"><b>${emblem(tierAt(S.meta.xp), 22)} ${esc(rankInfo().label)}</b><span>rank · ${S.meta.xp.toLocaleString()} XP</span></a>
@@ -639,7 +658,6 @@ function renderHome() {
       <div class="week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''}" title="${d.k}: ${S.meta.days[d.k] || 0} XP"><i></i>${d.l}</div>`).join('')}</div>
     </div>
   </section>
-  ${donateCard()}
 
   ${(() => {
     const courses = [...new Set(nbs.filter((n) => n.digest).map((n) => n.course || 'Other'))].map((c) => ({ c, list: courseNotebooks(c) })).filter((x) => x.list.length > 1);
@@ -652,9 +670,9 @@ function renderHome() {
     <div class="row between"><h2>Your notebooks</h2></div>
     ${nbs.length ? `<div class="grid">${nbs.map(nbCard).join('')}</div>` : `
       <div class="card empty"><div class="big">📚</div><h3>No notebooks yet</h3>
-      <p class="muted">A notebook = one lecture or topic. Add slides, PDFs, notes, photos or links to it.</p>
-      <div class="row" style="justify-content:center"><button class="btn primary" data-act="new-nb">Create your first notebook</button><button class="btn" data-act="sample">Try the sample</button></div></div>`}
+      <p class="muted" style="margin:0">One notebook per lecture or topic. Tap <b>＋ New notebook</b> above to start, or try the sample first.</p></div>`}
   </section>
+  ${nbs.some((n) => n.digest) ? donateCard() : ''}
 
   ${weak.length ? `<section class="section"><h2>🎯 Weak spots</h2><p class="muted small">Concepts you’ve missed most. Drilling these is the fastest way to raise your score.</p>
     <div class="card flat bars">${weak.map((w) => `<div class="b"><div><b>${esc(w.c.name)}</b><div class="small muted">${esc(w.nb.title)}</div></div>
@@ -748,6 +766,7 @@ function pathSteps(nb) {
 }
 function nextStep(nb) { return pathSteps(nb).find((s) => !s.done) || { tab: dueCards(nb).length ? 'recall' : 'exam', label: dueCards(nb).length ? 'Review due cards' : 'Another practice exam' }; }
 
+const KIT_TABS = ['pretest', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
 function renderNotebook(nb, tab, arg) {
   if (tab === 'learn' && nb.digest && !nb.progress.learn) { nb.progress.learn = true; save(nb); }
   const steps = pathSteps(nb); const next = nextStep(nb); const due = dueCards(nb).length;
@@ -758,7 +777,7 @@ function renderNotebook(nb, tab, arg) {
       <div class="small muted">${esc(nb.course || '')}${nb.course ? ' · ' : ''}${pct(nbMastery(nb))}% mastery</div></div>
       <button class="icon-btn quiet" data-act="del-nb" data-id="${nb.id}" title="Delete notebook" aria-label="Delete notebook">${icon('trash')}</button>
     </div>
-    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav>
+    <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav>
     <div id="tab"></div>`;
   const tabsEl = $('.tabs');
   if (tabsEl) {
@@ -768,10 +787,11 @@ function renderNotebook(nb, tab, arg) {
     fades(); tabsEl.addEventListener('scroll', fades, { passive: true });
   }
   $('#nbTitleEdit').addEventListener('change', async (e) => { nb.title = e.target.value.trim() || 'Untitled notebook'; await save(nb); });
-  const needsKit = ['pretest', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'].includes(tab) && !nb.digest;
+  const needsKit = KIT_TABS.includes(tab) && !nb.digest;
   const el = $('#tab');
   if (needsKit) return renderNeedKit(nb, el);
   ({ sources: renderSources, pretest: renderPretest, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress }[tab] || renderSources)(nb, el, arg);
+  if (tab === 'learn' && nb.digest) el.insertAdjacentHTML('beforeend', `<div class="card overview row between learn-next"><div><h3 style="margin:0">Done reading?</h3><div class="small muted">Now pull it back out of your head. That’s what makes it stick.</div></div><a class="btn primary" href="#/nb/${nb.id}/recall">🧠 Start recall →</a></div>`);
 }
 function renderNeedKit(nb, el) {
   el.innerHTML = `<div class="card empty"><div class="big">✨</div><h3>Build your study kit first</h3>
@@ -806,14 +826,21 @@ function renderSources(nb, el) {
   <div class="stack">
     ${nb.sources.length ? `<div class="card overview row between">
       <div><h3 style="margin:0">${nb.digest ? (stale ? 'New material added' : 'Study kit ready ✓') : 'Ready to build your study kit'}</h3>
-      <div class="small muted">${nb.sources.length} source(s) · ~${Math.round(totalChars / 5).toLocaleString()} words${nb.digest ? ` · ${nb.digest.concepts.length} concepts · ${nb.cards.length} recall cards` : ''}</div></div>
+      <div class="small muted">${nb.sources.length} source${nb.sources.length === 1 ? '' : 's'} · ${nb.sources.reduce((a, s) => a + wordCount(s.text), 0).toLocaleString()} words${nb.digest ? ` · ${nb.digest.concepts.length} concepts · ${nb.cards.length} recall cards` : ''}</div></div>
       ${nb.digest && !stale ? `<div class="row"><button class="btn" data-act="build">↻ Rebuild</button><a class="btn primary" href="#/nb/${nb.id}/${nextStep(nb).tab}">Continue → ${esc(nextStep(nb).label)}</a></div>`
         : `<button class="btn primary lg" data-act="build">✨ ${nb.digest ? 'Rebuild' : 'Build'} study kit</button>`}
     </div>` : ''}
 
+    ${nb.sources.length ? `<div class="card flat" style="padding:0">${nb.sources.map((s) => `
+      <div class="src"><span class="ic">${KIND_ICON[s.kind] || '📄'}</span>
+        <div style="flex:1;min-width:0"><div class="nm">${esc(s.name)}</div><div class="small muted">${s.kind} · ${s.text.length.toLocaleString()} chars${s.images ? ` · 🖼️ ${s.images} picture${s.images === 1 ? '' : 's'}` : ['pdf', 'pptx'].includes(s.kind) && s.images === undefined ? ' · <span style="color:var(--warn)">no pictures yet: drop this file again to add them</span>' : ''}</div>
+        ${UI.preview === s.id ? `<pre>${esc(s.text.slice(0, 6000))}${s.text.length > 6000 ? '\n…' : ''}</pre>` : ''}</div>
+        <button class="btn sm ghost" data-act="preview-src" data-id="${s.id}">${UI.preview === s.id ? 'Hide' : 'Preview'}</button>
+        <button class="btn sm ghost" data-act="del-src" data-id="${s.id}" aria-label="Remove">✕</button></div>`).join('')}</div>` : ''}
+
     <label class="drop" id="drop">
       <div class="big">⬆️</div>
-      <b>Drop lecture files here</b> or click to choose
+      ${TOUCH ? '<b>Tap to add lecture files</b>' : '<b>Drop lecture files here</b> or click to choose'}
       <div class="small muted">PDF · PowerPoint (.pptx) · Word (.docx) · images/photos · .txt/.md</div>
       <input type="file" id="fileIn" multiple accept=".pdf,.pptx,.docx,.txt,.md,image/*" class="file-hidden">
     </label>
@@ -836,12 +863,6 @@ function renderSources(nb, el) {
         <p class="small muted">Articles are read as text. For a YouTube lecture, Gemini watches the video and writes timestamped study notes (about a minute).</p></div>
     </div>
 
-    ${nb.sources.length ? `<div class="card flat" style="padding:0">${nb.sources.map((s) => `
-      <div class="src"><span class="ic">${KIND_ICON[s.kind] || '📄'}</span>
-        <div style="flex:1;min-width:0"><div class="nm">${esc(s.name)}</div><div class="small muted">${s.kind} · ${s.text.length.toLocaleString()} chars${s.images ? ` · 🖼️ ${s.images} picture${s.images === 1 ? '' : 's'}` : ['pdf', 'pptx'].includes(s.kind) && s.images === undefined ? ' · <span style="color:var(--warn)">no pictures yet: drop this file again to add them</span>' : ''}</div>
-        ${UI.preview === s.id ? `<pre>${esc(s.text.slice(0, 6000))}${s.text.length > 6000 ? '\n…' : ''}</pre>` : ''}</div>
-        <button class="btn sm ghost" data-act="preview-src" data-id="${s.id}">${UI.preview === s.id ? 'Hide' : 'Preview'}</button>
-        <button class="btn sm ghost" data-act="del-src" data-id="${s.id}" aria-label="Remove">✕</button></div>`).join('')}</div>` : ''}
     ${totalChars > 700000 ? '<p class="small" style="color:var(--bad)">That’s a lot of material for one notebook. Splitting it into separate lectures gives better questions.</p>' : ''}
   </div>`;
   const drop = $('#drop'); const fileIn = $('#fileIn');
@@ -1084,10 +1105,15 @@ function visualsFor(nb, ref, limit = 4) {
 // Build the study kit
 const BUILD_STEPS = ['Reading your material…', 'Finding the most testable concepts…', 'Designing visual summary cards…', 'Drawing the concept map…', 'Writing pretest & recall questions…', 'Preparing teach-back prompts…', 'Almost there — checking everything lines up…'];
 function renderBuilding(el) {
+  const nb = curNb(); const w = nb ? nb.sources.reduce((a, s) => a + wordCount(s.text), 0) : 0;
+  const est = S.status.public ? (w < 3000 ? 35 : w < 8000 ? 60 : 110) : (w < 3000 ? 90 : 150);
+  const estText = est < 50 ? 'about 30 seconds' : est < 100 ? 'about a minute' : 'a minute or two';
   el.innerHTML = `<div class="card building"><div class="spinner lg" style="margin:0 auto"></div><h2 style="margin-top:16px">Building your study kit</h2>
-    <div class="step" id="buildStep">${BUILD_STEPS[0]}</div><p class="small muted">Usually 1–3 minutes for a full lecture. While you wait: what do you already know about this topic?</p></div>`;
+    <div class="step" id="buildStep">${BUILD_STEPS[0]}</div>
+    <div class="meter build-bar"><i style="animation-duration:${est}s"></i></div>
+    <p class="small muted">Usually ${estText} for this much material. Keep this tab open: it jumps to a quick pretest when it’s ready.</p></div>`;
   let i = 0; clearInterval(UI.buildTimer);
-  UI.buildTimer = setInterval(() => { const s = $('#buildStep'); if (!s) return clearInterval(UI.buildTimer); i = Math.min(i + 1, BUILD_STEPS.length - 1); s.textContent = BUILD_STEPS[i]; }, 14000);
+  UI.buildTimer = setInterval(() => { const s = $('#buildStep'); if (!s) return clearInterval(UI.buildTimer); i = Math.min(i + 1, BUILD_STEPS.length - 1); s.textContent = BUILD_STEPS[i]; }, Math.max(4000, est * 1000 / BUILD_STEPS.length));
 }
 ACT.build = async () => {
   const nb = curNb();
@@ -1157,7 +1183,8 @@ function renderPretest(nb, el) {
   el.innerHTML = `<div class="q-card stack">
     <div class="card overview row between"><div><h2>Pretest done ✓</h2><p class="muted" style="margin:0">Keep these answers in mind. You’ll meet them again in the visual lesson.</p></div>
       <a class="btn primary" href="#/nb/${nb.id}/learn">Learn it visually →</a></div>
-    ${qs.map((q, i) => { const a = nb.pretest.answers[i] || ''; const close = a && coverage(a, q.answer) >= 0.3;
+    ${qs.map((q, i) => { const raw = nb.pretest.answers[i] || ''; const a = /^\s*(idk|i ?d(on|o)n?'?t know|no idea|not sure|dunno|n\/?a|\?+|-+)\s*$/i.test(raw) ? '' : raw;
+      const close = !!a && (coverage(a, q.answer) >= 0.3 || (words(a).length >= 2 && coverage(q.answer, a) >= 0.6));
       return `<div class="card"><div class="row between"><span class="tag">${esc(conceptName(nb, q.concept_id))}</span>${a ? `<span class="tag ${close ? 'good' : 'warn'}">${close ? 'Good instinct!' : 'Now you know'}</span>` : ''}</div>
       <div class="q-text">${esc(q.question)}</div>
       <div class="small muted">Your guess</div><div>${a ? esc(a) : '<i class="muted">skipped</i>'}</div>
@@ -1203,7 +1230,7 @@ function renderLearn(nb, el) {
 }
 function summaryCard(nb, c, i, mode) {
   const st = UI.cardRecall[`${nb.id}:${i}`];
-  const head = `<div class="row between"><span class="emoji">${esc(c.emoji)}</span><span class="ref">${esc(c.source_ref)}</span></div>${cardPictures(nb, c, i)}<h3 style="margin:0">${esc(c.title)}</h3>`;
+  const head = `<div class="row between"><span class="emoji">${esc(c.emoji)}</span><span class="ref">${esc(refLabel(nb, c.source_ref))}</span></div>${cardPictures(nb, c, i)}<h3 style="margin:0">${esc(c.title)}</h3>`;
   if (mode === 'study') {
     return `<div class="card scard">${head}<ul>${c.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
       ${c.analogy ? `<div class="analogy">🔗 ${esc(c.analogy)}</div>` : ''}</div>`;
@@ -1228,7 +1255,8 @@ function cardPictures(nb, c, i) {
   const ill = nb.illustrations[`card${i}:diagram`];
   if (ill) return `<div class="shots one"><figure data-act="zoom-ill" data-key="card${i}:diagram"><img alt="${esc(c.title)} diagram" src="${illSrc(ill)}"><span>🎨 drawn</span></figure></div>`;
   if (UI.illBusy?.[`card${i}:diagram`]) return '<div class="shot-empty"><span class="spinner"></span> Drawing a diagram…</div>';
-  return `<button class="shot-empty" data-act="card-draw" data-i="${i}">🎨 No slide picture for this card. Draw a diagram</button>`;
+  const hasSlides = nb.sources.some((s) => ['pdf', 'pptx', 'image'].includes(s.kind) || s.images);
+  return hasSlides ? `<button class="shot-empty" data-act="card-draw" data-i="${i}">🎨 No slide picture for this card. Draw a diagram</button>` : '';
 }
 ACT['zoom-shot'] = (el) => { UI.zoom = { list: UI.shots[el.dataset.key] || [], i: +el.dataset.k }; showZoom(); };
 function showZoom() {
@@ -1276,17 +1304,17 @@ function conceptCard(nb, c) {
   const ills = ['diagram', 'mnemonic'].map((s) => ({ s, v: nb.illustrations[`${c.id}:${s}`] })).filter((x) => x.v);
   const busy = UI.illBusy || {};
   return `<div class="card concept" id="concept-${c.id}">
-    <div class="row between"><h3 style="margin:0">${esc(c.name)}</h3><div class="row">${m !== null ? `<span class="tag ${m >= .7 ? 'good' : m >= .4 ? 'warn' : 'bad'}">${pct(m)}%</span>` : ''}<span class="tag">${esc(c.source_ref)}</span></div></div>
+    <div class="row between"><h3 style="margin:0">${esc(c.name)}</h3><div class="row">${m !== null ? `<span class="tag ${m >= .7 ? 'good' : m >= .4 ? 'warn' : 'bad'}">${pct(m)}%</span>` : ''}${refLabel(nb, c.source_ref) ? `<span class="tag">${esc(refLabel(nb, c.source_ref))}</span>` : ''}</div></div>
     <div>${esc(c.definition)}</div>
     <div class="small muted">Why it matters: ${esc(c.why_it_matters)}</div>
     ${c.mnemonic ? `<div class="mnemo">🤪 <b>Mnemonic:</b> ${esc(c.mnemonic)}</div>` : ''}
     ${(() => { const pk = refShots(nb, c.image_refs); const sh = pk.length ? pk : visualsFor(nb, c.source_ref, 4); return sh.length ? shotStrip(`concept-${c.id}`, sh) : ''; })()}
     ${ills.length ? `<div class="ill">${ills.map(({ s, v }) => `<figure data-act="zoom-ill" data-key="${c.id}:${s}"><img alt="${esc(c.name)} ${s}" src="${illSrc(v)}"><figcaption>${s === 'mnemonic' ? '🤪 ' : '🎨 '}${esc(v.caption || '')}</figcaption></figure>`).join('')}</div>` : ''}
-    <div class="row">
+    <div class="row concept-acts">
       ${['diagram', 'mnemonic'].map((s) => busy[`${c.id}:${s}`] ? `<button class="btn sm" disabled><span class="spinner"></span> Drawing…</button>`
-        : `<button class="btn sm" data-act="illustrate" data-cid="${c.id}" data-style="${s}">${s === 'diagram' ? '🎨' : '🤪'} ${nb.illustrations[`${c.id}:${s}`] ? 'Redraw' : s === 'diagram' ? 'Draw diagram' : 'Mnemonic picture'}</button>`).join('')}
-      <button class="btn sm" data-act="vid-concept" data-cid="${c.id}">🎬 ${(nb.videos || []).some((v) => v.concept_id === c.id) ? 'See video' : 'Find a video'}</button>
-      <a class="btn sm ghost" href="#/nb/${nb.id}/recall/${c.id}">🧠 Quiz me on this</a>
+        : `<button class="btn sm" data-act="illustrate" data-cid="${c.id}" data-style="${s}">${s === 'diagram' ? '🎨' : '🤪'} ${nb.illustrations[`${c.id}:${s}`] ? 'Redraw' : s === 'diagram' ? 'Diagram' : 'Mnemonic'}</button>`).join('')}
+      <button class="btn sm" data-act="vid-concept" data-cid="${c.id}">🎬 Video</button>
+      <a class="btn sm ghost" href="#/nb/${nb.id}/recall/${c.id}">🧠 Quiz me</a>
     </div></div>`;
 }
 const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(v.svg) : v.src);
@@ -1398,11 +1426,11 @@ function recallSession(el) {
   el.innerHTML = `<div class="q-card">
     <div class="progress-line"><i style="width:${pct(R.i / R.queue.length)}%"></i></div>
     <div class="card">
-      <div class="row between"><span class="row" style="gap:6px"><span class="tag accent">${card.kind === 'picture' ? '🖼️ picture' : esc(card.kind)}</span>${R.scope.startsWith('course:') ? `<span class="tag">${esc(nb.title)}</span>` : ''}</span>
-        <span class="small muted">${R.i + 1} / ${R.queue.length} · ${esc(conceptName(nb, card.concept_id))}</span></div>
+      <div class="row between"><span class="row" style="gap:6px"><span class="tag accent">${card.kind === 'picture' ? '🖼️ Picture' : esc(CARD_KIND[card.kind] || card.kind)}</span>${R.scope.startsWith('course:') ? `<span class="tag">${esc(nb.title)}</span>` : ''}</span>
+        <span class="small muted">${R.i + 1} / ${R.queue.length}${Object.keys(R.requeued || {}).length ? ` (incl. ${Object.keys(R.requeued).length} retry)` : ''} · ${esc(conceptName(nb, card.concept_id))}</span></div>
       ${pic.length ? `<div style="margin-top:10px">${shotStrip('rc', pic)}</div>` : card.image ? '<div class="shot-empty" style="margin-top:10px"><span class="spinner"></span> Loading picture…</div>' : ''}
-      <div class="q-text">${esc(card.question)}</div>
-      ${!res ? `<textarea id="ans" placeholder="Type your answer from memory… (⌘/Ctrl + Enter to check)">${esc(R.draft || '')}</textarea>
+      <div class="q-text">${tx(card.question)}</div>
+      ${!res ? `<textarea id="ans" placeholder="Type your answer from memory…${TOUCH ? '' : ' (⌘/Ctrl + Enter to check)'}">${esc(R.draft || '')}</textarea>
         <div class="row" style="margin-top:10px"><span class="small muted">How sure are you?</span>
           <div class="seg">${Object.entries(CONF).map(([k, l]) => `<button class="${R.conf === k ? 'on' : ''}" data-act="rc-conf" data-c="${k}">${l}</button>`).join('')}</div></div>
         <div class="row" style="margin-top:10px"><button class="btn ghost" data-act="rc-idk">I don’t know</button>${micBtn('ans')}<span class="spacer"></span>
@@ -1725,7 +1753,7 @@ function renderVideos(nb, el) {
   const watched = nb.videos.filter((v) => v.watched).length;
   el.innerHTML = `<div class="stack">
     <div class="card overview"><h2>🎬 Videos</h2>
-      <p style="margin:0 0 4px">Short, trusted explainers matched to this lecture. Each one comes with <b>questions to watch for</b>. Read them first, watch, then prove it stuck by quizzing yourself or teaching it back.</p>
+      <p style="margin:0 0 4px">${S.status.public && !S.status.youtube ? 'YouTube searches matched to each concept, aimed at trusted teaching channels.' : 'Short, trusted explainers matched to this lecture.'} Each one comes with <b>questions to watch for</b>. Read them first, watch, then prove it stuck by quizzing yourself or teaching it back.</p>
       <div class="small muted">${S.status.youtube ? 'Gemini picks what to search and real YouTube videos are found for you (about 30 seconds).' : 'Gemini picks the best YouTube search for each concept, with questions to watch for. Tap a card to see the results on YouTube.'}</div>
       ${busy ? `<div class="row" style="margin-top:12px"><span class="spinner"></span><span>Searching YouTube${busy.label ? ' for <b>' + esc(busy.label) + '</b>' : ''} and checking each link…</span></div>`
         : `<div class="row" style="margin-top:12px;flex-wrap:wrap;gap:8px">
@@ -1866,12 +1894,13 @@ ACT['exam-gen'] = async () => {
 function examTake(nb, el) {
   const X = UI.exam; const q = X.questions[X.i];
   el.innerHTML = `<div class="q-card stack">
-    <div class="row between"><div class="qnav">${X.questions.map((_, i) => `<button class="${X.answers[i] ? 'ans' : ''} ${i === X.i ? 'cur' : ''}" data-act="ex-go" data-i="${i}">${i + 1}</button>`).join('')}</div>
-      ${X.deadline ? '<span class="timer" id="exTimerLbl"></span>' : ''}</div>
+    <div class="progress-line"><i style="width:${pct((X.i + 1) / X.questions.length)}%"></i></div>
+    <details class="qnav-wrap" ${TOUCH ? '' : 'open'}><summary><span>Question ${X.i + 1} of ${X.questions.length} · ${X.answers.filter(Boolean).length} answered</span>${X.deadline ? '<span class="timer" id="exTimerLbl"></span>' : ''}</summary>
+      <div class="qnav">${X.questions.map((_, i) => `<button class="${X.answers[i] ? 'ans' : ''} ${i === X.i ? 'cur' : ''}" data-act="ex-go" data-i="${i}">${i + 1}</button>`).join('')}</div></details>
     <div class="card"><div class="small muted">Question ${X.i + 1} of ${X.questions.length} · ${q.image ? '🖼️ Picture question' : q.type === 'mcq' ? 'Multiple choice' : 'Short answer'}</div>
       ${q.image ? `<div style="margin-top:10px">${(UI.shots ||= {}, shotStrip('ex', refShots(nb, [q.image])))}</div>` : ''}
-      <div class="q-text">${esc(q.question)}</div>
-      ${q.type === 'mcq' ? q.options.map((o, j) => `<label class="opt ${X.answers[X.i] === o ? 'sel' : ''}"><input type="radio" name="exopt" value="${j}" ${X.answers[X.i] === o ? 'checked' : ''}> <span>${esc(o)}</span></label>`).join('')
+      <div class="q-text">${tx(q.question)}</div>
+      ${q.type === 'mcq' ? q.options.map((o, j) => `<label class="opt ${X.answers[X.i] === o ? 'sel' : ''}"><input type="radio" name="exopt" value="${j}" ${X.answers[X.i] === o ? 'checked' : ''}> <span>${tx(o)}</span></label>`).join('')
         : `<textarea id="exShort" placeholder="Your answer…">${esc(X.answers[X.i])}</textarea>`}
       <div class="row" style="margin-top:14px"><button class="btn" data-act="ex-go" data-i="${X.i - 1}" ${X.i === 0 ? 'disabled' : ''}>← Back</button><span class="spacer"></span>
         ${X.i < X.questions.length - 1 ? `<button class="btn primary" data-act="ex-go" data-i="${X.i + 1}">Next →</button>` : ''}
