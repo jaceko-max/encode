@@ -320,12 +320,37 @@ document.addEventListener('click', (e) => {
 // ───────────────────────── appearance: background ─────────────────────────
 // Default is the black perspective grid. Photos come from Wikimedia Commons (free licenses; credit shown in the corner and in Settings).
 const BGS = [{ id: 'grid', name: 'Grid', css: 'grid-floor' }, ...[{"id": "longroom", "name": "Long Room library", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4b/Long_Room_Interior%2C_Trinity_College_Dublin%2C_Ireland_-_Diliff.jpg/1920px-Long_Room_Interior%2C_Trinity_College_Dublin%2C_Ireland_-_Diliff.jpg", "page": "https://commons.wikimedia.org/wiki/File:Long_Room_Interior,_Trinity_College_Dublin,_Ireland_-_Diliff.jpg", "by": "Diliff", "license": "CC BY-SA 4.0", "pos": "50% 45%"}, {"id": "peabody", "name": "Peabody Library", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/George-peabody-library.jpg/1920px-George-peabody-library.jpg", "page": "https://commons.wikimedia.org/wiki/File:George-peabody-library.jpg", "by": "Matthew Petroff", "license": "CC BY-SA 3.0", "pos": "50% 40%"}, {"id": "moraine", "name": "Moraine Lake", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c5/Moraine_Lake_17092005.jpg/1920px-Moraine_Lake_17092005.jpg", "page": "https://commons.wikimedia.org/wiki/File:Moraine_Lake_17092005.jpg", "by": "Gorgo", "license": "Public domain", "pos": "50% 50%"}, {"id": "clearwater", "name": "Lake Clearwater", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Lake_Clearwater%2C_Canterbury%2C_New_Zealand_02.jpg/1920px-Lake_Clearwater%2C_Canterbury%2C_New_Zealand_02.jpg", "page": "https://commons.wikimedia.org/wiki/File:Lake_Clearwater,_Canterbury,_New_Zealand_02.jpg", "by": "Michal Klajban", "license": "CC BY-SA 4.0", "pos": "50% 50%"}, {"id": "archway", "name": "Sea arch", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Island_Archway%2C_Great_Ocean_Rd%2C_Victoria%2C_Australia_-_Nov_08.jpg/1920px-Island_Archway%2C_Great_Ocean_Rd%2C_Victoria%2C_Australia_-_Nov_08.jpg", "page": "https://commons.wikimedia.org/wiki/File:Island_Archway,_Great_Ocean_Rd,_Victoria,_Australia_-_Nov_08.jpg", "by": "Diliff", "license": "CC BY-SA 3.0", "pos": "50% 50%"}, {"id": "dunes", "name": "Dunes at dawn", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cb/Utah_Dunes_Landscape_-_West_Desert_District.jpg/1920px-Utah_Dunes_Landscape_-_West_Desert_District.jpg", "page": "https://commons.wikimedia.org/wiki/File:Utah_Dunes_Landscape_-_West_Desert_District.jpg", "by": "Bob Wick, BLM", "license": "Public domain", "pos": "50% 60%"}, {"id": "forest", "name": "Pine forest (painting)", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1e/Shishkin%2C_Ivan_-_Morning_in_a_Pine_Forest.jpg/1920px-Shishkin%2C_Ivan_-_Morning_in_a_Pine_Forest.jpg", "page": "https://commons.wikimedia.org/wiki/File:Shishkin,_Ivan_-_Morning_in_a_Pine_Forest.jpg", "by": "Ivan Shishkin & Konstantin Savitsky", "license": "Public domain", "pos": "50% 50%"}, {"id": "aurora", "name": "Aurora", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg/1920px-Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg", "page": "https://commons.wikimedia.org/wiki/File:Aurora_in_Abisko_near_Tornetr%C3%A4sk.jpg", "by": "Pavel.shyshkouski", "license": "CC BY-SA 4.0", "pos": "50% 40%"}, {"id": "stars", "name": "Starry night", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b4/ALMA_and_a_Starry_Night.jpg/1920px-ALMA_and_a_Starry_Night.jpg", "page": "https://commons.wikimedia.org/wiki/File:ALMA_and_a_Starry_Night.jpg", "by": "ESO/B. Tafreshi (twanight.org)", "license": "CC BY 4.0", "pos": "50% 50%"}, {"id": "moonlight", "name": "Moonlit boathouse", "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8f/Holma_Boat_Club_by_the_light_of_the_moon.jpg/1920px-Holma_Boat_Club_by_the_light_of_the_moon.jpg", "page": "https://commons.wikimedia.org/wiki/File:Holma_Boat_Club_by_the_light_of_the_moon.jpg", "by": "W.carter", "license": "CC0", "pos": "40% 50%"}]];
+// Your own picture: uploads are shrunk and kept only in this browser (IndexedDB); links are used as-is.
+const OWN = { data: null, thumb: null, loaded: false };
+function ownDB() { return new Promise((ok, no) => { const r = indexedDB.open('encode-bg', 1); r.onupgradeneeded = () => r.result.createObjectStore('img'); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); }
+async function ownGet() { const db = await ownDB(); return new Promise((ok, no) => { const q = db.transaction('img').objectStore('img').get('own'); q.onsuccess = () => ok(q.result || null); q.onerror = () => no(q.error); }); }
+async function ownPut(v) { const db = await ownDB(); return new Promise((ok, no) => { const tx = db.transaction('img', 'readwrite'); tx.objectStore('img').put(v, 'own'); tx.oncomplete = () => ok(); tx.onerror = () => no(tx.error); }); }
+async function loadOwn() { if (OWN.loaded) return; try { const v = await ownGet(); if (v) { OWN.data = v.data; OWN.thumb = v.thumb; } } catch { /* storage blocked */ } OWN.loaded = true; }
+function ownBg() {
+  const o = LOOK.own; if (!o) return null;
+  if (o.kind === 'link') return /^https?:\/\/\S+$/i.test(o.url || '') ? { id: 'own', key: 'own:' + o.v, name: 'My picture', url: o.url, thumb: o.url, own: true } : null;
+  return { id: 'own', key: 'own:' + o.v, name: 'My picture', url: OWN.data, thumb: OWN.thumb, own: true };
+}
+async function shrinkImage(file) {
+  const src = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
+    const draw = (max, q) => {
+      const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
+      const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', q);
+    };
+    return { data: draw(2560, 0.86), thumb: draw(400, 0.8) };
+  } finally { URL.revokeObjectURL(src); }
+}
+const FIT_SIZE = { fill: 'cover', fit: 'contain', stretch: '100% 100%' };
 const LOOK_KEY = 'encode-look-v2';
-const LOOK = { theme: 'dark', bg: 'grid', strength: 'balanced', custom: null };
-try { const saved = JSON.parse(localStorage.getItem(LOOK_KEY) || 'null'); if (saved) Object.assign(LOOK, { bg: saved.bg || 'grid', strength: saved.strength || 'balanced', custom: saved.custom || null }); } catch { /* private mode */ }
+const LOOK = { theme: 'dark', bg: 'grid', strength: 'balanced', custom: null, own: null, fit: 'fill' };
+try { const saved = JSON.parse(localStorage.getItem(LOOK_KEY) || 'null'); if (saved) Object.assign(LOOK, { bg: saved.bg || 'grid', strength: saved.strength || 'balanced', custom: saved.custom || null, own: saved.own || null, fit: FIT_SIZE[saved.fit] ? saved.fit : 'fill' }); } catch { /* private mode */ }
 const okPhoto = (u) => /^https:\/\/(upload|thumb)\.wikimedia\.org\//.test(String(u || ''));
 const cssUrl = (u) => `url(${String(u).replace(/["'()\\\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})`;
-function findBg(id) { return BGS.find((x) => x.id === id) || (LOOK.custom && LOOK.custom.id === id && okPhoto(LOOK.custom.url) ? LOOK.custom : null); }
+function findBg(id) { if (id === 'own') return ownBg(); return BGS.find((x) => x.id === id) || (LOOK.custom && LOOK.custom.id === id && okPhoto(LOOK.custom.url) ? LOOK.custom : null); }
 if (LOOK.bg !== 'none' && !findBg(LOOK.bg)) LOOK.bg = 'grid';
 const thumbUrl = (b) => b.thumb || b.url.replace('/1920px-', '/500px-');
 // small preview of a Commons file: …/commons/a/ab/Name.jpg → …/commons/thumb/a/ab/Name.jpg/500px-Name.jpg
@@ -346,18 +371,23 @@ function applyLook() {
   root.classList.toggle('has-photo', !!b);
   root.classList.toggle('grid-bg', !!b?.css);
   layer.classList.toggle('grid-floor', b?.css === 'grid-floor');
-  if (!b || b.css) { layer.style.backgroundImage = ''; layer.dataset.bg = b ? b.id : ''; layer.classList.toggle('ready', !!b); credit.hidden = true; return; }
-  credit.hidden = false; credit.href = /^https:\/\/commons\.wikimedia\.org\//.test(b.page || '') ? b.page : 'https://commons.wikimedia.org/';
+  if (!b || b.css) { layer.style.backgroundImage = ''; layer.style.backgroundSize = ''; layer.dataset.bg = b ? b.id : ''; layer.classList.toggle('ready', !!b); credit.hidden = true; return; }
+  layer.style.backgroundSize = FIT_SIZE[LOOK.fit] || 'cover';
+  if (b.own && LOOK.own?.kind === 'upload' && !OWN.loaded) { loadOwn().then(() => { if (LOOK.bg === 'own') applyLook(); }); return; }
+  if (b.own && !b.url) { LOOK.bg = 'grid'; saveLook(); return; }
+  credit.hidden = !!b.own;
+  if (!b.own) credit.hidden = false; credit.href = /^https:\/\/commons\.wikimedia\.org\//.test(b.page || '') ? b.page : 'https://commons.wikimedia.org/';
   credit.textContent = `Photo: ${b.by}${b.license && b.license !== 'Public domain' ? ' · ' + b.license : ''}`;
   layer.style.backgroundPosition = b.pos || 'center';
-  if (layer.dataset.bg === b.id) return;
-  layer.dataset.bg = b.id; layer.classList.remove('ready');
+  const key = b.key || b.id;
+  if (layer.dataset.bg === key) return;
+  layer.dataset.bg = key; layer.classList.remove('ready');
   const img = new Image();
-  img.onload = () => { if (layer.dataset.bg !== b.id) return; layer.style.backgroundImage = cssUrl(b.url); requestAnimationFrame(() => layer.classList.add('ready')); };
-  img.onerror = () => { if (layer.dataset.bg !== b.id) return; LOOK.bg = 'grid'; saveLook(); refreshLook(); toast('That background couldn’t load, so the grid is back.'); };
+  img.onload = () => { if (layer.dataset.bg !== key) return; layer.style.backgroundImage = cssUrl(b.url); requestAnimationFrame(() => layer.classList.add('ready')); };
+  img.onerror = () => { if (layer.dataset.bg !== key) return; LOOK.bg = 'grid'; saveLook(); refreshLook(); toast('That background couldn’t load, so the grid is back.'); };
   img.src = b.url;
 }
-function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify({ bg: LOOK.bg, strength: LOOK.strength, custom: LOOK.custom })); } catch { /* private mode */ } applyLook(); }
+function saveLook() { try { localStorage.setItem(LOOK_KEY, JSON.stringify({ bg: LOOK.bg, strength: LOOK.strength, custom: LOOK.custom, own: LOOK.own, fit: LOOK.fit })); } catch { /* private mode */ } applyLook(); }
 
 // Search Wikimedia Commons for big, free landscape photos (no AI, no key; runs in the browser).
 const htmlText = (h) => new DOMParser().parseFromString(String(h || ''), 'text/html').body.textContent.replace(/\s+/g, ' ').trim();
@@ -402,29 +432,58 @@ function lookSection() {
   const cur = LOOK.bg === 'none' ? null : findBg(LOOK.bg);
   const custom = LOOK.custom && okPhoto(LOOK.custom.url) ? LOOK.custom : null;
   const R = UI.bgSearch || {};
+  const own = ownBg();
   return `<div class="look" id="lookBox">
     <h3 style="margin:0">Background</h3>
     <div class="bg-grid">
       ${bgButton(BGS[0])}
       <button type="button" class="bg-opt plain ${LOOK.bg === 'none' ? 'on' : ''}" data-act="look-bg" data-v="none"><span>Plain</span></button>
+      ${own?.thumb ? bgButton(own, 'look-bg', 'data-v="own"') : ''}
       ${custom ? bgButton(custom, 'look-bg', `data-v="${esc(custom.id)}"`) : ''}
       ${BGS.slice(1).map((b) => bgButton(b, 'look-bg', `data-v="${b.id}"`)).join('')}
     </div>
+    <div class="small muted">Your own picture</div>
+    <div class="row bg-own"><label class="btn sm" style="position:relative">📁 Upload a picture<input type="file" id="bgFile" accept="image/*" class="file-hidden"></label>
+      <input type="url" id="bgLink" placeholder="…or paste an image link" autocomplete="off" inputmode="url" enterkeyhint="go"><button type="button" class="btn sm" data-act="bg-link">Use link</button></div>
     <div class="small muted">Find more on the web</div>
     <div class="row bg-search"><input type="search" id="bgQ" placeholder="e.g. ocean, mountains, city at night, space" value="${esc(R.q || '')}" enterkeyhint="search" autocomplete="off">
       <button type="button" class="btn sm" data-act="bg-search" ${R.busy ? 'disabled' : ''}>${R.busy ? '<span class="spinner"></span> Searching' : '🔎 Search'}</button></div>
     ${R.err ? `<div class="small muted">${esc(R.err)}</div>` : ''}
     ${R.results?.length ? `<div class="bg-grid">${R.results.map((b, i) => bgButton(b, 'bg-pick', `data-i="${i}"`)).join('')}</div>
       <div class="small muted">Free-to-use photos from Wikimedia Commons. Tap one to use it.</div>` : ''}
-    ${cur && !cur.css ? `<div class="row between"><span class="small muted">Photo strength</span>${seg('look-strength', LOOK.strength, [['subtle', 'Subtle'], ['balanced', 'Balanced'], ['vivid', 'Vivid']])}</div>
-      <div class="small muted">“${esc(cur.name)}” by ${esc(cur.by)} (${esc(cur.license)}), <a href="${esc(cur.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>` : ''}
+    ${R.done && R.q ? `<div class="bg-google"><a class="btn sm" href="https://www.google.com/search?udm=2&amp;q=${encodeURIComponent(R.q + ' wallpaper')}" target="_blank" rel="noopener">Search Google Images for “${esc(R.q)}” ↗</a>
+      <div class="small muted">Games, shows and anything else live there. Open a picture, then copy its image address (long-press on a phone, right-click on a computer) and paste it in the link box above. Or save it and tap <b>Upload a picture</b>.</div></div>` : ''}
+    ${cur && !cur.css ? `<div class="row between"><span class="small muted">Picture fit</span>${seg('look-fit', LOOK.fit, [['fill', 'Fill'], ['fit', 'Fit'], ['stretch', 'Stretch']])}</div>
+      <div class="row between"><span class="small muted">Photo strength</span>${seg('look-strength', LOOK.strength, [['subtle', 'Subtle'], ['balanced', 'Balanced'], ['vivid', 'Vivid']])}</div>
+      ${cur.own ? '<div class="small muted">Your picture is saved only in this browser. Nobody else sees it.</div>' : `<div class="small muted">“${esc(cur.name)}” by ${esc(cur.by)} (${esc(cur.license)}), <a href="${esc(cur.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>`}` : ''}
   </div>`;
 }
 function refreshLook() {
+  if (LOOK.own?.kind === 'upload' && !OWN.loaded) loadOwn().then(refreshLook);
   const q = document.getElementById('bgQ'); if (q) (UI.bgSearch ||= {}).q = q.value;
   const el = document.getElementById('lookBox'); if (el) el.outerHTML = lookSection();
 }
 ACT['look-bg'] = (el) => { LOOK.bg = el.dataset.v; saveLook(); refreshLook(); };
+ACT['look-fit'] = (el) => { LOOK.fit = el.dataset.v; saveLook(); refreshLook(); };
+ACT['bg-link'] = () => {
+  const inp = document.getElementById('bgLink'); const u = (inp?.value || '').trim();
+  if (!/^https?:\/\/\S+$/i.test(u)) { toast('Paste a full link that starts with https://'); inp?.focus(); return; }
+  const img = new Image();
+  img.onload = () => { LOOK.own = { kind: 'link', url: u, v: Date.now() }; LOOK.bg = 'own'; saveLook(); refreshLook(); toast('Background set ✓'); };
+  img.onerror = () => toast('That link isn’t a picture. Open the image by itself and copy that address, or save the picture and upload it.', 'err');
+  img.src = u;
+};
+document.addEventListener('change', async (e) => {
+  if (e.target?.id !== 'bgFile') return;
+  const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
+  if (file.type && !/^image\//.test(file.type)) { toast('That file isn’t a picture.', 'err'); return; }
+  toast('Setting your background…');
+  try {
+    const { data, thumb } = await shrinkImage(file);
+    await ownPut({ data, thumb }); OWN.data = data; OWN.thumb = thumb; OWN.loaded = true;
+    LOOK.own = { kind: 'upload', v: Date.now() }; LOOK.bg = 'own'; saveLook(); refreshLook(); toast('Background set ✓');
+  } catch { toast('Couldn’t open that picture. Try a JPG or PNG.', 'err'); }
+});
 ACT['look-strength'] = (el) => { LOOK.strength = el.dataset.v; saveLook(); refreshLook(); };
 ACT['bg-pick'] = (el) => { const b = UI.bgSearch?.results?.[+el.dataset.i]; if (!b) return; LOOK.custom = b; LOOK.bg = b.id; saveLook(); refreshLook(); };
 ACT['bg-search'] = async () => {
@@ -434,12 +493,13 @@ ACT['bg-search'] = async () => {
   R.busy = true; R.err = ''; refreshLook();
   try {
     R.results = await searchBackgrounds(q);
-    if (!R.results.length) R.err = `No pictures found for “${q}”. Try a simpler word like ocean, forest, city or space.`;
+    if (!R.results.length) R.err = `Wikimedia has no free pictures for “${q}”. Try Google Images below.`;
   } catch { R.results = []; R.err = 'Couldn’t reach Wikimedia right now. Check your connection and try again.'; }
-  R.busy = false; refreshLook();
+  R.busy = false; R.done = true; refreshLook();
 };
-document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target?.id === 'bgQ') { e.preventDefault(); ACT['bg-search'](); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target?.id === 'bgQ') { e.preventDefault(); ACT['bg-search'](); } if (e.key === 'Enter' && e.target?.id === 'bgLink') { e.preventDefault(); ACT['bg-link'](); } });
 applyLook();
+if (LOOK.own?.kind === 'upload') loadOwn(); // so its preview is ready in Settings
 
 // ═════════════════════════ HOME ═════════════════════════
 // Donation note on the home page (email assembled at runtime so simple scrapers don't pick it up).

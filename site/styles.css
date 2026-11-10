@@ -104,7 +104,7 @@ button, .btn { font: inherit; }
 .btn.sm { padding: 5px 10px; font-size: .85rem; border-radius: 9px; }
 .btn.lg { padding: 13px 22px; font-size: 1.02rem; }
 .btn[disabled] { opacity: .5; pointer-events: none; }
-input[type=text], input[type=url], input[type=password], input[type=number], textarea, select {
+input[type=text], input[type=search], input[type=url], input[type=password], input[type=number], textarea, select {
   font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 10px 12px; width: 100%; }
 textarea { resize: vertical; min-height: 90px; }
 input:focus, textarea:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
@@ -583,3 +583,9 @@ h3, .nb-title-input { font-family: var(--font); letter-spacing: -.01em; }
   .chips button { padding-block: 8px; }
   .nb-head > div > a.small { padding: 12px 0; }
 }
+
+/* own background picture */
+.bg-own { gap: 8px; flex-wrap: wrap; }
+.bg-own input { flex: 1; min-width: 150px; }
+.bg-google { display: grid; gap: 6px; justify-items: start; }
+input[type=search] { -webkit-appearance: none; appearance: none; }
