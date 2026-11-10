@@ -104,11 +104,11 @@
   function geminiError(status, j) {
     const msg = j?.error?.message || j?.error || '';
     const e = geminiError0(status, msg); e.status = status; e.raw = String(msg);
-    e.retry = status === 429 || status >= 500 || status === 404 || (status === 403 && /not been used|disabled|not found|no longer|not available/i.test(msg));
+    e.retry = status === 429 || status === 402 || /credits are depleted|prepayment/i.test(msg) || status >= 500 || status === 404 || (status === 403 && /not been used|disabled|not found|no longer|not available/i.test(msg));
     return e;
   }
   function geminiError0(status, msg) {
-    if (status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(msg)) {
+    if (status === 429 || status === 402 || /quota|RESOURCE_EXHAUSTED|credits are depleted|prepayment|billing/i.test(msg)) {
       return new AIErr(ownKey()
         ? 'Your Gemini key hit its free limit for now. Wait a minute (or until tomorrow) and try again.'
         : 'The site’s free AI allowance is used up for now. Add your own free Gemini key in Settings to keep going.', 'no_key');
@@ -122,7 +122,7 @@
 
   /** A Gemini call that moves to the next model if one is unavailable, out of quota or stuck in a queue. */
   async function gemini(body, { model, onText, firstByteMs = 60000, tier = 'full' } = {}) {
-    const chain = model ? [model] : (await modelChain(tier)).slice(0, 4);
+    const chain = model ? [model] : (await modelChain(tier)).slice(0, 7); // instant refusals cost ~0.2 s each
     let last, best;
     for (const m of chain) {
       const state = { sent: false }; const rec = { model: m, start: Date.now() }; attempts.push(rec); if (attempts.length > 30) attempts.shift();

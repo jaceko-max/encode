@@ -279,7 +279,12 @@ function modal(html, wide = false) {
 }
 function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; }
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Enter' && !e.shiftKey && e.target.matches?.('#modal input[type=text], #modal input:not([type])')) {
+    const btn = $('#modal .btn.primary'); if (btn) { e.preventDefault(); btn.click(); }
+  }
+});
 
 // ───────────────────────── routing ─────────────────────────
 function route() {
@@ -382,6 +387,7 @@ function renderHome() {
     <div class="card overview">
       <h1>${greet} 👋</h1>
       <p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>
+      <p class="small muted" style="margin:-4px 0 12px">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
       <div class="row">
         ${due ? `<button class="btn primary lg" data-act="review-all">Review ${due} due card${due > 1 ? 's' : ''}</button>` : ''}
         <button class="btn ${due ? '' : 'primary lg'}" data-act="new-nb">＋ New notebook</button>
@@ -564,6 +570,7 @@ function renderSources(nb, el) {
       <div class="small muted">PDF · PowerPoint (.pptx) · Word (.docx) · images/photos · .txt/.md</div>
       <input type="file" id="fileIn" multiple accept=".pdf,.pptx,.docx,.txt,.md,image/*" class="file-hidden">
     </label>
+    <p class="small muted" style="margin:8px 0 0">Your material is sent to Google Gemini to build the kit. Please don’t upload anything private.</p>
     <label class="check small"><input type="checkbox" id="aiRead" ${S.status.claude ? 'checked' : 'disabled'}> Read diagrams & scanned pages in PDFs with AI (slower, captures figures)</label>
     ${ing.length ? `<div class="card tight">${ing.map((i) => `<div class="ingest-item">${i.status === 'work' ? '<span class="spinner"></span>' : i.status === 'ok' ? '✅' : '⚠️'}<span>${esc(i.name)}</span><span class="muted small">${esc(i.msg || '')}</span></div>`).join('')}</div>` : ''}
 
@@ -579,7 +586,7 @@ function renderSources(nb, el) {
       <div class="card stack"><h3>🌐 Add a web link or YouTube lecture</h3>
         <input type="url" id="urlIn" placeholder="https://…">
         <button class="btn" data-act="add-url">Fetch link</button>
-        <p class="small muted">Articles are read as text. YouTube uses the video’s captions; if a video has none, paste its transcript instead.</p></div>
+        <p class="small muted">Articles are read as text. For a YouTube lecture, Gemini watches the video and writes timestamped study notes (about a minute).</p></div>
     </div>
 
     ${nb.sources.length ? `<div class="card flat" style="padding:0">${nb.sources.map((s) => `
