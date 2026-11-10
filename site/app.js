@@ -2281,22 +2281,21 @@ function homeLbCard() {
   const host = $('#homeLb'); if (!host) return;
   lbFetch().then((d) => {
     const h = $('#homeLb'); if (!h) return;
-    const top = d.weekly.slice(0, 3); const me = d.me?.joined && d.me.weekPlace > 3 ? d.weekly[d.me.weekPlace - 1] : null;
-    h.innerHTML = `<div class="row between"><h2>🏆 This week</h2><a class="small" href="#/leaderboard">Full leaderboard →</a></div>
-      <div class="card lb-list">${lbRows(top, 'No one has scored this week yet. Your next study session could put you at #1!')}
-      ${me ? `<div class="lb-row me"><span class="lb-place">#${d.me.weekPlace}</span>${emblem(tierAt(me.total), 24)}<span class="lb-name">${esc(me.name)} <span class="tag accent">you</span></span><b class="lb-xp">${me.xp.toLocaleString()}<span> XP</span></b></div>` : ''}
-      ${S.meta.lbJoined ? '' : '<div class="row" style="margin-top:10px"><button class="btn sm primary" data-act="lb-join">Join the leaderboard</button><span class="small muted">Resets every Sunday · #1 wins a crown</span></div>'}</div>`;
+    const tab = UI.lbHomeTab || 'week'; const rows = tab === 'week' ? d.weekly : d.allTime;
+    const scroller = h.querySelector('.lb-scroll'); const keep = scroller && UI.lbHomeTabShown === tab ? scroller.scrollTop : null;
+    h.innerHTML = `<div class="row between"><h2>🏆 Leaderboard</h2><a class="small" href="#/leaderboard">Full page →</a></div>
+      <div class="card lb-home">
+        <div class="row between lb-home-top"><div class="seg">${[['week', 'This week'], ['all', 'All time']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-act="lb-home-tab" data-v="${k}">${l}</button>`).join('')}</div>
+          <span class="small muted">${rows.length} ${rows.length === 1 ? 'player' : 'players'}${tab === 'week' ? ` · resets in ${fmtUntil(d.resetsAt)}` : ''}</span></div>
+        <div class="lb-list lb-scroll">${lbRows(rows, tab === 'week' ? 'No one has scored this week yet. Your next study session could put you at #1!' : 'No one has joined yet. Be the first!')}</div>
+        ${S.meta.lbJoined ? '' : '<div class="row" style="margin-top:10px"><button class="btn sm primary" data-act="lb-join">Join the leaderboard</button><span class="small muted">Resets every Sunday · #1 wins a crown</span></div>'}</div>`;
+    UI.lbHomeTabShown = tab;
+    const box = h.querySelector('.lb-scroll');
+    if (keep !== null) box.scrollTop = keep;
+    else { const me = box.querySelector('.lb-row.me'); if (me && me.offsetTop + me.offsetHeight > box.clientHeight) box.scrollTop = me.offsetTop - box.clientHeight / 2 + me.offsetHeight / 2; }
   }).catch(() => { const h = $('#homeLb'); if (h) h.innerHTML = ''; });
 }
-// Site owner only: #/leaderboard/admin shows a ✕ on each row (needs LB_ADMIN_KEY from Netlify; kept for this tab only).
-ACT['lb-admin-del'] = async (el) => {
-  const name = el.dataset.n; if (!confirm(`Remove “${name}” from the leaderboard?`)) return;
-  let key = sessionStorage.getItem('lb-admin') || prompt('Admin password (LB_ADMIN_KEY on Netlify):') || ''; if (!key) return;
-  const r = await fetch('/edge/lb', { method: 'DELETE', headers: { 'content-type': 'application/json', 'x-admin-key': key }, body: JSON.stringify({ name }) });
-  const j = await r.json().catch(() => ({}));
-  if (!j.removed) { sessionStorage.removeItem('lb-admin'); toast(r.ok ? 'Wrong password, or that name is already gone' : (j.error || 'Could not remove'), 'err'); return; }
-  sessionStorage.setItem('lb-admin', key); toast(`Removed ${name}`); renderLeaderboard();
-};
+ACT['lb-home-tab'] = (el) => { UI.lbHomeTab = el.dataset.v; homeLbCard(); };
 ACT['lb-tab'] = (el) => { UI.lbTab = el.dataset.v; drawLeaderboard(UI.lb?.data); };
 ACT['lb-join'] = () => {
   const go = async (name) => {

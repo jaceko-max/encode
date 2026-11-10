@@ -732,3 +732,9 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .plate.plate-gold::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 40%, rgba(255, 241, 184, .16) 50%, transparent 60%); transform: translateX(-100%); animation: plate-shine 5s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .plate.plate-gold::after { animation: none; display: none; } }
 .lb-row:has(.lb-x) { grid-template-columns: 40px 26px 1fr auto auto; }
+
+/* home leaderboard: the whole board, capped to about 5 rows and scrollable inside the card */
+.lb-home-top { gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.lb-scroll { max-height: 312px; overflow-y: auto; overscroll-behavior: contain; position: relative; padding-right: 4px; scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); padding-bottom: 14px; }
+@media (max-width: 520px) { .lb-scroll { max-height: 290px; } }
