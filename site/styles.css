@@ -511,3 +511,75 @@ body { background-attachment: scroll; }
 .bg-opt { -webkit-tap-highlight-color: transparent; }
 /* phones: photo credit sits at the very bottom of the page instead of floating over content */
 @media (max-width: 760px) { .bg-credit { position: static; display: block; width: fit-content; margin: -16px auto 24px; } .bg-credit[hidden] { display: none; } }
+
+
+/* ═════════════ UI refresh: crystal palette, type, touch + focus ═════════════ */
+/* Colors follow the crystal logo (electric blue → cyan) on cool blue-black instead of generic purple. */
+:root[data-theme="dark"] {
+  --bg: #05070c; --surface: #0c111c; --surface-2: #131a29; --border: #1f2a41; --text: #e9eef7; --muted: #9ca9c0;
+  --accent: #4fa8ff; --accent-2: #3dd6f5; --accent-soft: #0f2340; --accent-text: #031020;
+  --glow-1: rgba(79, 125, 255, .18); --glow-2: rgba(61, 214, 245, .10); --glow-3: rgba(45, 212, 191, .08); --veil: 5, 7, 12;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 8px 24px rgba(0, 0, 0, .3);
+}
+.btn.primary { background: linear-gradient(135deg, #4f7dff, #3dd6f5); color: var(--accent-text); border-color: transparent;
+  box-shadow: 0 4px 16px rgba(61, 160, 255, .28); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary:active { transform: translateY(1px); }
+.tabs a.on { color: var(--accent-text); background: linear-gradient(135deg, #4f7dff, #3dd6f5); }
+.tabs a.on .badge { background: var(--accent-text); color: #8fd8ff; }
+.progress-line i { background: linear-gradient(90deg, #4f7dff, #3dd6f5); box-shadow: 0 0 12px rgba(61, 214, 245, .55); }
+.nb-card:hover { box-shadow: 0 10px 30px rgba(0, 0, 0, .35); border-color: color-mix(in srgb, var(--accent-2) 40%, var(--border)); }
+.tag.accent { color: #8fd8ff; }
+::selection { background: rgba(61, 214, 245, .35); color: #fff; }
+
+/* Type: one characterful display face for big headings and the wordmark; study text stays in the
+   easy-to-read system font (question and card titles included). */
+h1, h2, .brand-name, .overview h2, .stat b { font-family: "Chakra Petch", var(--font); letter-spacing: -.005em; font-weight: 700; }
+h3, .nb-title-input { font-family: var(--font); letter-spacing: -.01em; }
+.nb-title-input { font-weight: 750; }
+.brand-name { letter-spacing: .01em; }
+
+/* Clear keyboard focus everywhere */
+:where(a, button, summary, label.btn, [tabindex]):focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+:where(input, textarea, select):focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+
+/* SVG icons in the chrome (no emoji icons) */
+.icon-btn { display: inline-grid; place-items: center; }
+.icon-btn .ico { width: 18px; height: 18px; }
+.chip .ico { width: 15px; height: 15px; }
+.chip .ico.flame { color: #ff9f43; } .chip .ico.star { color: #facc15; }
+.icon-btn.quiet { background: transparent; border-color: transparent; color: var(--muted); }
+.icon-btn.quiet:hover, .icon-btn.quiet:focus-visible { color: var(--bad); background: var(--bad-soft); }
+.nb-del { display: inline-grid; place-items: center; color: var(--muted); }
+.nb-del:hover, .nb-del:focus-visible { color: var(--bad); }
+.nb-del .ico { width: 16px; height: 16px; }
+.nb-head { align-items: flex-start; }
+
+/* tabs: keep the open tab in view and fade the edge when more tabs are hidden */
+.tabs { position: relative; scroll-behavior: smooth; }
+.tabs.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
+.tabs.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 40px); mask-image: linear-gradient(to right, transparent, #000 40px); }
+.tabs.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); }
+
+/* Finger-sized targets on touch screens (44px minimum) */
+@media (pointer: coarse) {
+  .btn, .btn.sm { min-height: 44px; }
+  .btn.sm { padding-inline: 14px; }
+  .icon-btn { width: 44px; height: 44px; }
+  .tabs a { min-height: 44px; display: inline-flex; align-items: center; }
+  .seg button { min-height: 44px; }
+  .chips button { min-height: 44px; }
+  .qnav button { width: 44px; height: 44px; }
+  .nb-del { min-width: 44px; min-height: 44px; margin: -8px -10px -8px 0; }
+  .nb-head > div > a.small { display: inline-block; padding: 10px 0; margin: -10px 0 -4px; }
+  .opt { padding: 14px; }
+}
+/* concept map: edge labels readable on the dark theme */
+.map-wrap .edgeLabel, .map-wrap .edgeLabel p, .map-wrap .labelBkg { background-color: var(--surface-2) !important; color: var(--text) !important; }
+.map-wrap .edgeLabel rect { fill: var(--surface-2) !important; }
+@media (pointer: coarse) {
+  .seg button { min-width: 44px; }
+  .scard .shot-empty, .shot-empty { min-height: 44px; }
+  .chips button { padding-block: 8px; }
+  .nb-head > div > a.small { padding: 12px 0; }
+}

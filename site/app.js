@@ -255,8 +255,8 @@ async function refreshStatus() {
 function renderTop() {
   const xpIn = S.meta.xp % LEVEL_XP;
   $('#topStats').innerHTML = `
-    <span class="chip" title="Study streak">🔥 ${streak()}</span>
-    <span class="chip" title="${S.meta.xp} XP total">⭐ Lv ${level()} <span class="bar"><i style="width:${pct(xpIn / LEVEL_XP)}%"></i></span></span>`;
+    <span class="chip" title="Study streak">${icon('flame').replace('class="ico"', 'class="ico flame"')} ${streak()}</span>
+    <span class="chip" title="${S.meta.xp} XP total">${icon('star').replace('class="ico"', 'class="ico star"')} Lv ${level()} <span class="bar"><i style="width:${pct(xpIn / LEVEL_XP)}%"></i></span></span>`;
 }
 function renderBanner() {
   const st = S.status;
@@ -502,7 +502,7 @@ function renderHome() {
 function nbCard(nb) {
   const due = dueCards(nb).length; const step = nextStep(nb);
   return `<div class="card nb-card" data-act="open-nb" data-id="${nb.id}">
-    <div class="row between"><span class="tag accent">${esc(nb.course || 'Lecture')}</span><span class="row" style="gap:6px">${due ? `<span class="tag warn">${due} due</span>` : ''}<button class="nb-del" data-act="del-nb" data-id="${nb.id}" title="Delete this notebook" aria-label="Delete ${esc(nb.title)}">🗑</button></span></div>
+    <div class="row between"><span class="tag accent">${esc(nb.course || 'Lecture')}</span><span class="row" style="gap:6px">${due ? `<span class="tag warn">${due} due</span>` : ''}<button class="nb-del" data-act="del-nb" data-id="${nb.id}" title="Delete this notebook" aria-label="Delete ${esc(nb.title)}">${icon('trash')}</button></span></div>
     <h3>${esc(nb.title)}</h3>
     <div class="meta"><span>📄 ${nb.sources.length} source${nb.sources.length === 1 ? '' : 's'}</span><span>🧠 ${nb.cards.length} cards</span><span>🎯 ${pct(nbMastery(nb))}% mastery</span></div>
     <div class="meter"><i style="width:${pct(nbMastery(nb))}%"></i></div>
@@ -537,6 +537,10 @@ ACT['review-all'] = () => {
 
 // ───────────────────────── line icons (tabs) ─────────────────────────
 const ICON_PATHS = {
+  trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/>',
+  flame: '<path d="M12 22a7 7 0 0 0 7-7c0-4-3-6-4-10-2 2-2 4-2 6-1-1-2-2-2-4-3 2-6 5-6 8a7 7 0 0 0 7 7z"/>',
+  star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sources: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   pretest: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   learn: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
@@ -553,7 +557,7 @@ const icon = (k) => ICON_PATHS[k] ? `<svg class="ico" viewBox="0 0 24 24" aria-h
 function confetti() {
   try { if (matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch { /* old browser */ }
   const box = document.createElement('div'); box.className = 'confetti'; box.setAttribute('aria-hidden', 'true');
-  const colors = ['#8b5cf6', '#22d3ee', '#ec4899', '#facc15', '#4ade80'];
+  const colors = ['#4f7dff', '#3dd6f5', '#a5f3fc', '#facc15', '#4ade80'];
   for (let i = 0; i < 70; i++) {
     const p = document.createElement('i');
     p.style.left = `${Math.random() * 100}vw`; p.style.background = colors[i % colors.length];
@@ -590,10 +594,17 @@ function renderNotebook(nb, tab, arg) {
       <a href="#/" class="small">← All notebooks</a>
       <div><input class="nb-title-input" id="nbTitleEdit" value="${esc(nb.title)}" size="${Math.max(12, nb.title.length + 2)}" aria-label="Notebook title"></div>
       <div class="small muted">${esc(nb.course || '')}${nb.course ? ' · ' : ''}${pct(nbMastery(nb))}% mastery</div></div>
-      <button class="btn sm ghost" data-act="del-nb" data-id="${nb.id}">🗑 Delete notebook</button>
+      <button class="icon-btn quiet" data-act="del-nb" data-id="${nb.id}" title="Delete notebook" aria-label="Delete notebook">${icon('trash')}</button>
     </div>
     <nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''}">${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav>
     <div id="tab"></div>`;
+  const tabsEl = $('.tabs');
+  if (tabsEl) {
+    const fades = () => { tabsEl.classList.toggle('fade-l', tabsEl.scrollLeft > 4); tabsEl.classList.toggle('fade-r', tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 4); };
+    const on = tabsEl.querySelector('a.on');
+    if (on) { tabsEl.style.scrollBehavior = 'auto'; tabsEl.scrollLeft = Math.max(0, on.offsetLeft - (tabsEl.clientWidth - on.offsetWidth) / 2); tabsEl.style.scrollBehavior = ''; }
+    fades(); tabsEl.addEventListener('scroll', fades, { passive: true });
+  }
   $('#nbTitleEdit').addEventListener('change', async (e) => { nb.title = e.target.value.trim() || 'Untitled notebook'; await save(nb); });
   const needsKit = ['pretest', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'].includes(tab) && !nb.digest;
   const el = $('#tab');
