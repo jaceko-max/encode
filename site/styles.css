@@ -905,3 +905,10 @@ html.pm-open { overflow: hidden; }
 .lesson-text > p:first-child { font-size: 1.12rem; font-weight: 600; color: var(--text); }
 .paper-task { align-items: center; }
 .lesson-help-row { gap: 4px; }
+
+/* lesson checks: confidence + review tag */
+.conf-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.chip-btn { border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font: inherit; font-size: .82rem; font-weight: 600; padding: 4px 11px; border-radius: 999px; cursor: pointer; }
+.chip-btn.on { color: #04121f; background: #3dd6f5; border-color: transparent; }
+@media (pointer: coarse) { .chip-btn { min-height: 36px; } }
+.review-tag { font-size: .7rem; vertical-align: middle; background: color-mix(in srgb, #facc15 18%, var(--surface-2)); color: #fde68a; }

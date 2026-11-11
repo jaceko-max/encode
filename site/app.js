@@ -17,7 +17,7 @@ function md(text) {
 }
 const STOP = new Set('the a an and or of to in on for with is are was were be by as at it its that this from into than then which who what when how why your you their they them our not but can will has have had do does did'.split(' '));
 function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
-function words(s) { return norm(s).split(' ').filter((w) => w.length > 2 && !STOP.has(w)); }
+function words(s) { return norm(s).split(' ').filter((w) => (/\d/.test(w) || w.length > 2) && !STOP.has(w)); }
 const wordCount = (s) => (String(s || '').match(/\S+/g) || []).length;
 const TOUCH = (() => { try { return matchMedia('(pointer: coarse)').matches; } catch { return false; } })();
 // AI text: show typed arrows as real arrows
@@ -712,7 +712,7 @@ if (LOOK.own?.kind === 'upload') loadOwn(); // so its preview is ready in Settin
 const DONATE_TO = ['kojace263', 'gmail.com'].join('@');
 function donateCard() {
   return `<div class="card donate"><span class="donate-ico">☕</span>
-    <div class="spacer"><b>Help keep 3nc0de free</b><div class="small muted">The AI costs real money to run. If 3nc0de helps you study, please donate $1 on Zelle to <b class="donate-to">${DONATE_TO}</b>. <span style="white-space:nowrap">Thank you! – Ko</span></div></div>
+    <div class="spacer"><b>Help keep Etch free</b><div class="small muted">The AI costs real money to run. If Etch helps you study, please donate $1 on Zelle to <b class="donate-to">${DONATE_TO}</b>. <span style="white-space:nowrap">Thank you! – Ko</span></div></div>
     <button class="btn sm" data-act="copy-donate">Copy email</button></div>`;
 }
 ACT['copy-donate'] = async () => {
@@ -1288,7 +1288,9 @@ function applyDigest(nb, d, map = {}) {
   const nodeIds = new Set(d.concept_map.nodes.map((n) => n.id));
   d.concept_map.edges = d.concept_map.edges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
   const old = new Map(nb.cards.map((c) => [norm(c.question), c]));
-  nb.cards = [...d.recall, ...pictureCards].map((r) => { const o = old.get(norm(r.question)); return o ? { ...o, ...r } : { id: uid(), ...r, srs: newSrs(), history: [] }; });
+  const kitCards = [...d.recall, ...pictureCards].map((r) => { const o = old.get(norm(r.question)); return o ? { ...o, ...r } : { id: uid(), ...r, srs: newSrs(), history: [] }; });
+  const kitQs = new Set(kitCards.map((c) => norm(c.question)));
+  nb.cards = [...kitCards, ...nb.cards.filter((c) => c.from === 'lesson' && !kitQs.has(norm(c.question)))];
   if (nb.title === 'Untitled notebook' || nb.sources.some((s) => s.name.replace(/\.[a-z0-9]+$/i, '') === nb.title)) nb.title = d.title;
   if (nb.digest) nb.pretest = { done: nb.pretest.done, answers: [] }; // rebuilding doesn't make you redo the pretest
   nb.digest = d; nb.builtAt = Date.now();
@@ -1335,7 +1337,7 @@ ACT['redo-pretest'] = async () => { const nb = curNb(); nb.pretest = { done: fal
 // The old all-at-once cards page is now the Revise tab.
 // Before writing a lesson or test, make sure we know whether the AI is on (right after a reload it may not be checked yet).
 async function aiReady() { if (!S.status.checked) { try { await refreshStatus(); } catch { /* offline */ } } return !!S.status.claude; }
-const LESSON_V = 2; // v2 = shorter, bullet-first lessons
+const LESSON_V = 3; // v2 = shorter, bullet-first; v3 = harder checks with concept ids
 function lessonOf(nb, i) {
   const L = (nb.lessons || {})[i]; const c = nb.digest?.cards[i];
   return L && c && L.title === c.title ? L : null;
@@ -1350,8 +1352,9 @@ function lessonInfo(nb, i) {
   const L = lessonOf(nb, i);
   if (!L?.data) return { state: 'new', pct: 0, label: 'Not started' };
   const st = lessonStages(L.data); const checks = Object.values(L.checks || {});
-  const right = checks.filter((x) => x.ok >= 1).length; const total = st.filter((s) => s.k === 'check').length;
+  const right = checks.filter((x) => (x.first ?? x.ok) >= 1).length; const total = st.filter((s) => s.k === 'check').length;
   if (L.done) return { state: 'done', pct: 100, label: total && checks.length ? `Done ✓ · ${right}/${total} quick checks right` : 'Done ✓' };
+  if (st[L.pos || 0]?.k === 'test') return { state: 'going', pct: 90, label: 'Section test waiting' };
   return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: `In progress · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` };
 }
 const lessonNext = (nb) => { const n = nb.digest.cards.length; for (let i = 0; i < n; i++) if (lessonInfo(nb, i).state !== 'done') return i; return 0; };
@@ -1478,7 +1481,7 @@ async function buildLesson(nb, i, { force = false } = {}) {
       const cards = nb.digest.cards;
       data = cleanLesson(await ai('lesson', {
         sources: aiSources(nb), index: i + 1, count: cards.length, title: c.title, points: c.points, analogy: c.analogy,
-        concepts: (c.concept_ids || []).map((id) => nb.digest.concepts.find((x) => x.id === id)).filter(Boolean).map((x) => ({ name: x.name, definition: x.definition })),
+        concepts: (c.concept_ids || []).map((id) => nb.digest.concepts.find((x) => x.id === id)).filter(Boolean).map((x) => ({ id: x.id, name: x.name, definition: x.definition })),
         before: cards.slice(0, i).map((x) => x.title), after: cards.slice(i + 1).map((x) => x.title),
       }));
       if (!data.steps.length) throw new Error('The lesson came back empty. Try again.');
@@ -1530,8 +1533,8 @@ function lessonNextBtn(nb, i, L, s) {
   const ch = s.k === 'check' ? L.data.steps[s.j].check : null;
   if (s.k === 'intro') return `<button class="btn primary lg" data-act="lesson-next">Start lesson →</button>`;
   if (s.k === 'step') return `<button class="btn primary" data-act="lesson-next">${L.data.steps[s.j].check?.question ? 'Got it → quick check' : 'Next →'}</button>`;
-  if (s.k === 'check') return L.checks[s.j] ? '<button class="btn primary" data-act="lesson-next">Next →</button>' : `<button class="btn ghost" data-act="lesson-next">Skip this question</button>`;
-  if (s.k === 'test') { const sc = testScore(L); const all = sc && sc.answered === sc.total && sc.para !== null; return `<button class="btn ${all ? 'primary' : 'ghost'}" data-act="lesson-next">${all ? 'See my results →' : 'Skip the test'}</button>`; }
+  if (s.k === 'check') return L.checks[s.j]?.verdict ? '<button class="btn primary" data-act="lesson-next">Next →</button>' : `<button class="btn ghost" data-act="lesson-next">Skip this question</button>`;
+  if (s.k === 'test') { const sc = testScore(L); const all = sc && sc.answered === sc.total && sc.para !== null; return all ? '<button class="btn primary" data-act="lesson-next">See my results →</button>' : `<a class="btn ghost" href="#/nb/${nb.id}/lessons">Finish later</a>`; }
   if (s.k === 'recall') return `<button class="btn ${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'primary' : 'ghost'}" data-act="lesson-next">${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'Next: section test →' : 'Skip to the test'}</button>`;
   return '';
 }
@@ -1569,7 +1572,9 @@ function lessonStageHTML(nb, i, L, s, steps) {
         <div class="row"><button class="btn primary sm" data-act="lesson-help" data-mode="question">Ask</button><button class="btn ghost sm" data-act="lesson-ask-cancel">Cancel</button></div></div>` : ''}`;
   }
   if (s.k === 'check') {
-    const x = d.steps[s.j]; const ch = x.check; const r = (L.checks || {})[s.j]; const grading = UI.lessonGrading === `${nb.id}:${i}:${s.j}`;
+    const x = d.steps[s.j]; const ch = x.check; const raw = (L.checks || {})[s.j]; const r = raw?.verdict ? raw : null; const grading = UI.lessonGrading === `${nb.id}:${i}:${s.j}`;
+    const ckey = `${nb.id}:${i}:${s.j}`; const conf = (UI.lessonConf ||= {})[ckey];
+    const confRow = r ? '' : `<div class="conf-row"><span class="small muted">How sure are you?</span>${[['guess', 'Guessing'], ['think', 'Think so'], ['sure', 'Sure']].map(([k, l]) => `<button class="chip-btn ${conf === k ? 'on' : ''}" data-act="lesson-conf" data-c="${k}">${l}</button>`).join('')}</div>`;
     let body;
     if (ch.type === 'mcq') {
       body = `<div class="lesson-opts">${ch.options.map((o, k) => {
@@ -1582,12 +1587,13 @@ function lessonStageHTML(nb, i, L, s, steps) {
           <div class="row"><button class="btn primary" data-act="lesson-short" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : 'Check my answer'}</button></div>`;
     }
     const v = r?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
-    return `<div class="lesson-kicker">Quick check · step ${s.j + 1} of ${steps} · ${ch.type === 'mcq' ? 'multiple choice' : 'short answer'}</div>
-      <h2 class="lesson-q">${esc(ch.question)}</h2>${body}
+    return `<div class="lesson-kicker">Quick check · step ${s.j + 1} of ${steps} · ${ch.type === 'mcq' ? 'multiple choice' : 'short answer'}${raw?.tries && !r ? ' · second try' : ''}</div>
+      <h2 class="lesson-q">${esc(ch.question)}</h2>${confRow}${body}
       ${r ? `<div class="verdict ${v}"><h3>${head}</h3>${r.feedback ? `<div>${esc(r.feedback)}</div>` : ''}
         ${ch.type === 'short' ? `<div class="small" style="margin-top:6px"><b>Key answer:</b> ${esc(ch.answer)}</div>` : ''}
         ${ch.explanation ? `<div class="small" style="margin-top:6px">${esc(ch.explanation)}</div>` : ''}
-        ${v !== 'correct' ? '<div style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Review the step</button></div>' : ''}</div>` : ''}`;
+        ${r.conf === 'sure' && v !== 'correct' ? '<div class="small" style="margin-top:6px">⚠️ You were sure, so this one comes back in Recall today.</div>' : ''}
+        ${v !== 'correct' ? `<div class="row" style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Review the step</button>${(r.tries || 1) < 2 ? '<button class="btn sm" data-act="lesson-retry">↻ Try again</button>' : ''}</div>` : ''}</div>` : ''}`;
   }
   if (s.k === 'recall') {
     const stR = UI.cardRecall[`${nb.id}:${i}`];
@@ -1629,7 +1635,7 @@ function shuffleOpts(q) {
   const hit = opts.find((o) => norm(o) === norm(q.answer)) || opts.find((o) => similar(o, q.answer) > 0.85);
   if (opts.length < 2 || !hit) return null;
   for (let k = opts.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [opts[k], opts[r]] = [opts[r], opts[k]]; }
-  return { question: q.question, options: opts, answer: hit, explanation: q.explanation || '' };
+  return { question: q.question, options: opts, answer: hit, explanation: q.explanation || '', concept_id: q.concept_id || '', review: !!q.review };
 }
 function localTest(nb, i, L) {
   const c = nb.digest.cards[i];
@@ -1644,8 +1650,14 @@ async function buildTest(nb, i) {
     try {
       const r = await ai('section_test', { sources: aiSources(nb), title: c.title, points: c.points,
         steps: (L.data.steps || []).map((s) => `${s.title}: ${String(s.explain || '').slice(0, 220)}`),
-        used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean) });
-      const mcq = (r.mcq || []).map(shuffleOpts).filter(Boolean);
+        used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean),
+        concepts: nb.digest.concepts.map((x) => ({ id: x.id, name: x.name })),
+        earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 2).map((x) => ({ title: x.title, points: x.points })) });
+      const used = (L.data.steps || []).map((s) => s.check?.question).filter(Boolean);
+      let mcq = (r.mcq || []).map(shuffleOpts).filter(Boolean);
+      // drop test questions that just re-ask a quick check (keep at least 3)
+      const fresh = mcq.filter((q) => !used.some((u) => coverage(q.question, u) >= 0.6 && coverage(u, q.question) >= 0.6));
+      if (fresh.length >= 3) mcq = fresh;
       if (!mcq.length || !r.paragraph?.prompt) throw new Error('The test came back incomplete. Try again.');
       t = { mcq, paragraph: r.paragraph };
     } catch (e) { if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the section test with AI (${e.message}). Using a shorter one.`, 'err'); }
@@ -1668,7 +1680,7 @@ function testStageHTML(nb, i, L) {
   const sc = testScore(L); const P = T.para; const grading = UI.paraGrading === key;
   const mcqHTML = T.mcq.map((q, k) => {
     const a = T.answers[k];
-    return `<div class="test-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${esc(q.question)}</b></div>
+    return `<div class="test-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${q.review ? '<span class="tag review-tag">Review · earlier section</span> ' : ''}${esc(q.question)}</b></div>
       <div class="lesson-opts">${q.options.map((o, n) => {
         const cls = a !== undefined ? (o === q.answer ? 'right' : a === o ? 'wrong' : 'dim') : '';
         return `<button class="opt ${cls}" data-act="test-mcq" data-q="${k}" data-o="${n}" ${a !== undefined ? 'disabled' : ''}><span class="opt-l">${'ABCD'[n] || n + 1}</span><span>${esc(o)}</span></button>`;
@@ -1705,7 +1717,7 @@ ACT['test-mcq'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T) return;
   const k = +el.dataset.q; if (T.answers[k] !== undefined) return;
   const q = T.mcq[k]; const pick = q.options[+el.dataset.o]; T.answers[k] = pick;
-  lessonRecord(nb, i, k, pick === q.answer ? 1 : 0); await save(nb);
+  lessonRecord(nb, i, q, pick === q.answer ? 1 : 0); await save(nb);
   const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y);
   if (pick === q.answer) gainXP(3, 'section test');
 };
@@ -1745,11 +1757,33 @@ async function lessonMove(delta) {
   L.pos = Math.max(0, Math.min(st.length - 1, (L.pos || 0) + delta));
   UI.lessonDir = delta > 0 ? 'in' : 'back'; UI.lessonAsk = null;
   if (st[L.pos].k === 'done' && !L.done) {
-    L.done = true;
-    if (Object.values(nb.lessons).filter((x) => x?.done).length >= 1) nb.progress.learn = true;
-    save(nb); lessonShow(nb, i); confetti(); await gainXP(15, 'section learned'); return;
+    const sc = testScore(L);
+    if (!sc || sc.answered < sc.total || sc.para === null) { L.pos = st.findIndex((x) => x.k === 'test'); toast('Finish the section test to complete this section.'); save(nb); lessonShow(nb, i); return; }
+    L.done = true; nb.progress.learn = true;
+    const added = lessonToRecall(nb, i, L);
+    save(nb); lessonShow(nb, i); confetti(); await gainXP(15, 'section learned');
+    if (added) setTimeout(() => toast(`🧠 ${added} question${added > 1 ? 's' : ''} added to Recall, so they come back for spaced review`), 1200);
+    return;
   }
   save(nb); lessonShow(nb, i);
+}
+// Spacing: what you missed comes back in Recall tomorrow (today if you were sure but wrong); two test questions you
+// got right come back in 3 days, so the whole section gets re-quizzed later.
+function lessonToRecall(nb, i, L) {
+  const day = 86400e3; const items = [];
+  (L.data.steps || []).forEach((s, j) => { const ch = s.check; if (!ch?.question) return; const r = L.checks?.[j]; const first = r ? (r.first ?? r.ok) : 0; items.push({ q: ch.question, a: ch.answer, miss: first < 1, sure: r?.conf === 'sure', item: ch }); });
+  (L.test?.mcq || []).forEach((q, k) => items.push({ q: q.question, a: q.answer, miss: L.test.answers[k] !== q.answer, test: true, item: q }));
+  const have = new Set(nb.cards.map((c) => norm(c.question))); let keep = 2; let added = 0;
+  for (const it of items) {
+    if (have.has(norm(it.q))) continue;
+    let due;
+    if (it.miss) due = Date.now() + (it.sure ? 0 : day);
+    else if (it.test && keep > 0) { keep--; due = Date.now() + 3 * day; }
+    else continue;
+    nb.cards.push({ id: uid(), question: it.q, answer: it.a, concept_id: itemConcept(nb, i, it.item), kind: 'explain', from: 'lesson', srs: { ...newSrs(), due }, history: [] });
+    have.add(norm(it.q)); added++;
+  }
+  return added;
 }
 ACT['lesson-next'] = () => lessonMove(1);
 ACT['lesson-back'] = () => {
@@ -1777,18 +1811,37 @@ ACT['lesson-help'] = async (el) => {
     const boxes = document.querySelectorAll('#lessonStage .lesson-box.help'); boxes[boxes.length - 1]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 };
-function lessonRecord(nb, i, j, ok) { const ids = nb.digest.cards[i].concept_ids || []; if (ids.length) record(nb, ids[j % ids.length], ok); }
+// Which concept a question tests: the id the AI gave it, else the closest concept by wording (not its position).
+function itemConcept(nb, i, item) {
+  const all = nb.digest.concepts || []; if (item?.concept_id && all.some((c) => c.id === item.concept_id)) return item.concept_id;
+  const ids = nb.digest.cards[i]?.concept_ids || [];
+  const pool = item?.review || !ids.length ? all : ids.map((id) => all.find((c) => c.id === id)).filter(Boolean);
+  let best = null, bs = -1;
+  for (const c of pool) { const sc = coverage(`${item?.question || ''} ${item?.answer || ''}`, `${c.name} ${c.definition}`); if (sc > bs) { bs = sc; best = c; } }
+  return best?.id || ids[0];
+}
+function lessonRecord(nb, i, item, ok) { const cid = itemConcept(nb, i, item); if (cid) record(nb, cid, ok); }
 ACT['lesson-mcq'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
-  if (s.k !== 'check' || L.checks[s.j]) return;
+  const prev = L.checks[s.j]; if (s.k !== 'check' || prev?.verdict) return;
   const ch = L.data.steps[s.j].check; const k = +el.dataset.o; const ok = ch.options[k] === ch.answer;
-  L.checks[s.j] = { pick: k, ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: ok ? '' : `The answer is: ${ch.answer}` };
-  lessonRecord(nb, i, s.j, ok ? 1 : 0); await save(nb); lessonShow(nb, i);
-  if (ok) gainXP(4, 'quick check');
+  const conf = UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '';
+  L.checks[s.j] = { pick: k, ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: ok ? '' : `The answer is: ${ch.answer}`, conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : (ok ? 1 : 0) };
+  if (!prev) lessonRecord(nb, i, ch, ok ? 1 : 0);
+  await save(nb); lessonShow(nb, i);
+  if (ok) gainXP(prev ? 2 : 4, prev ? 'got it on the retry' : 'quick check');
+};
+ACT['lesson-conf'] = (el) => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; (UI.lessonConf ||= {})[`${nb.id}:${i}:${s.j}`] = el.dataset.c; lessonShow(nb, i); };
+ACT['lesson-retry'] = async () => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; const r = L.checks[s.j];
+  if (s.k !== 'check' || !r || (r.tries || 1) >= 2) return;
+  L.checks[s.j] = { tries: r.tries || 1, first: r.first ?? r.ok, conf: r.conf };
+  const ch = L.data.steps[s.j].check; if (ch.type === 'mcq') { const o = ch.options.slice(); for (let k = o.length - 1; k > 0; k--) { const q = Math.floor(Math.random() * (k + 1)); [o[k], o[q]] = [o[q], o[k]]; } ch.options = o; }
+  await save(nb); lessonShow(nb, i);
 };
 ACT['lesson-short'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
-  if (s.k !== 'check' || L.checks[s.j]) return;
+  const prev = L.checks[s.j]; if (s.k !== 'check' || prev?.verdict) return;
   const ch = L.data.steps[s.j].check; const text = ($('#lessonA')?.value || '').trim();
   if (!text) { toast('Write an answer first, even a guess. Guessing helps you remember.'); $('#lessonA')?.focus(); return; }
   let r = quickGrade(text, ch.answer);
@@ -1800,10 +1853,12 @@ ACT['lesson-short'] = async () => {
   }
   if (!r || !r.verdict) { const cv = coverage(text, ch.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare your answer with the key answer below.' }; }
   const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
-  L.checks[s.j] = { text, ok, verdict: r.verdict, feedback: r.feedback || '' };
-  lessonRecord(nb, i, s.j, ok); await save(nb);
+  const conf = UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '';
+  L.checks[s.j] = { text, ok, verdict: r.verdict, feedback: r.feedback || '', conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : ok };
+  if (!prev) lessonRecord(nb, i, ch, ok);
+  await save(nb);
   if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i);
-  if (ok) gainXP(ok >= 1 ? 5 : 2, 'quick check');
+  if (ok) gainXP(prev ? 2 : ok >= 1 ? 5 : 2, prev ? 'got it on the retry' : 'quick check');
 };
 document.addEventListener('keydown', (e) => {
   if (route().tab !== 'lessons' || !$('#lessonStage') || !$('#modal').classList.contains('hidden') || document.getElementById('pomoScreen')) return;
@@ -1829,7 +1884,7 @@ function renderLearn(nb, el) {
   el.innerHTML = `
   <div class="stack">
     <div class="card overview"><h2>${esc(d.title)}</h2><p style="margin:0">${esc(d.overview)}</p></div>
-    ${noPics.length ? `<div class="card flat tight row" style="background:var(--warn-soft);border-color:transparent">🖼️ <span class="spacer small">This notebook was made before 3nc0de kept slide pictures. Drop <b>${noPics.map((s) => esc(s.name)).join(', ')}</b> on the Sources tab again to add them. Your study kit and progress stay the same.</span><a class="btn sm" href="#/nb/${nb.id}/sources">Go to Sources</a></div>` : ''}
+    ${noPics.length ? `<div class="card flat tight row" style="background:var(--warn-soft);border-color:transparent">🖼️ <span class="spacer small">This notebook was made before Etch kept slide pictures. Drop <b>${noPics.map((s) => esc(s.name)).join(', ')}</b> on the Sources tab again to add them. Your study kit and progress stay the same.</span><a class="btn sm" href="#/nb/${nb.id}/sources">Go to Sources</a></div>` : ''}
 
     <div class="row between section"><div><h2>🃏 Visual summary cards</h2><div class="small muted">Study a card, then flip to recall mode and write what you remember.</div></div>
       <div class="seg"><button class="${mode === 'study' ? 'on' : ''}" data-act="card-mode" data-m="study">Study</button><button class="${mode === 'recall' ? 'on' : ''}" data-act="card-mode" data-m="recall">Cover & recall</button></div></div>
@@ -1906,7 +1961,13 @@ ACT['card-mode'] = (el) => { UI.cardMode = el.dataset.m; render(); };
 ACT['card-reveal'] = async (el) => {
   const nb = curNb(); const i = +el.dataset.i; const c = nb.digest.cards[i];
   const text = $(`[data-cr="${i}"]`).value;
-  const hits = c.points.map((p) => coverage(text, p) >= 0.4);
+  let hits = null;
+  if (wordCount(text) >= 3 && S.status.claude) {
+    el.disabled = true; el.innerHTML = '<span class="spinner"></span> Checking…';
+    try { const r = await ai('recall_check', { points: c.points, response: text }); if (Array.isArray(r.hits) && r.hits.length === c.points.length) hits = r.hits.map((h) => !!h.got); }
+    catch { /* fall back to word matching */ }
+  }
+  if (!hits) hits = c.points.map((p) => coverage(text, p) >= 0.6);
   UI.cardRecall[`${nb.id}:${i}`] = { revealed: true, text, hits };
   const ratio = hits.filter(Boolean).length / c.points.length;
   c.concept_ids.forEach((cid) => record(nb, cid, ratio));
@@ -2139,15 +2200,23 @@ function startRecall(nb, mode, focus, routeFocus) {
 ACT['rc-conf'] = (el) => { UI.recall.conf = UI.recall.conf === el.dataset.c ? null : el.dataset.c; $$('[data-act="rc-conf"]').forEach((b) => b.classList.toggle('on', b.dataset.c === UI.recall.conf)); };
 // Clear-cut answers are graded on the spot (saves AI): near-identical to the key, or covering its key words.
 function quickGrade(response, answer) {
-  if (!norm(response)) return null;
-  // Longer answers carry relationships (which limb does what, what causes what) that word-matching can't check,
-  // e.g. swapping "ascending" and "descending" keeps every word. Those always go to the AI grader.
-  const exact = norm(response) === norm(answer);
-  const short = words(answer).length <= 3 && words(response).length <= 6;
-  if (exact || (short && (similar(response, answer) >= 0.9 || coverage(response, answer) >= 0.85))) {
-    return { verdict: 'correct', score: 1, feedback: 'Matches the key points ✓ (checked instantly)', missing: [], instant: true };
-  }
-  return null;
+  const r = norm(response), a = norm(answer); if (!r) return null;
+  const ok = { verdict: 'correct', score: 1, feedback: 'Matches the key points ✓ (checked instantly)', missing: [], instant: true };
+  if (r === a) return ok;
+  // Anything subtle goes to the AI grader: negations, numbers that differ, extra or missing pieces.
+  const NEG = /\b(not|no|never|none|without|neither|nor|isn t|aren t|doesn t|don t|can t|won t|cannot)\b/;
+  if (NEG.test(r) !== NEG.test(a)) return null;
+  const nums = (s) => (String(s || '').match(/\d+(?:\.\d+)?/g) || []);
+  const rn = nums(response), an = nums(answer);
+  if (rn.length || an.length) { if (an.some((n) => !rn.includes(n)) || rn.some((n) => !an.includes(n))) return null; }
+  // Only short, single-fact keys are graded instantly; longer answers carry relationships word-matching can't check.
+  const kw = words(answer), rw = words(response);
+  if (kw.length > 3 || rw.length > 6) return null;
+  const close = (x, y) => x === y || (x.length > 4 && y.length > 4 && lev(x, y) <= 1);
+  const allKey = kw.every((k) => rw.some((w) => close(w, k)));
+  const extra = rw.filter((w) => !kw.some((k) => close(w, k))).length;
+  const typo = 1 - lev(r, a) / Math.max(r.length, a.length); // whole-answer spelling slip, e.g. "tricuspd valve"
+  return (allKey && extra === 0) || typo >= 0.9 ? ok : null;
 }
 ACT['rc-check'] = async () => {
   const R = UI.recall; const { nb, card } = recallItem(R);
@@ -2654,7 +2723,7 @@ function renderProfile() {
   ${S.status.public ? `<section class="card stack lb-prof"><h2>🏆 Leaderboard</h2>
     ${S.meta.lbJoined ? `<p class="small muted" style="margin:0">You’re on the board as <b>${esc(P.name || '…')}</b>. Only your display name, rank and XP are shown.</p>
       <div class="row"><a class="btn primary" href="#/leaderboard">See the leaderboard</a><button class="btn ghost" data-act="lb-leave">Leave</button></div>`
-    : `<p class="small muted" style="margin:0">Compete with everyone on 3nc0de. It resets every Sunday, and the week’s #1 wins the 👑 Weekly Champion title and a gold nameplate. Only your display name, rank and XP are shown.</p>
+    : `<p class="small muted" style="margin:0">Compete with everyone on Etch. It resets every Sunday, and the week’s #1 wins the 👑 Weekly Champion title and a gold nameplate. Only your display name, rank and XP are shown.</p>
       <div class="row"><button class="btn primary" data-act="lb-join">Join the leaderboard</button><a class="btn ghost" href="#/leaderboard">Just look</a></div>`}
   </section>` : ''}
   <section class="card stack"><h2>Rank road</h2>
@@ -2750,7 +2819,7 @@ function drawLeaderboard(d) {
   <section class="card lb-head stack">
     <div class="row between"><h1 style="margin:0">🏆 Leaderboard</h1><span class="small muted">${d.players} player${d.players === 1 ? '' : 's'}</span></div>
     <div class="seg lb-tabs">${[['week', 'This week'], ['all', 'All time']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-act="lb-tab" data-v="${k}">${l}</button>`).join('')}</div>
-    <div class="small muted">${tab === 'week' ? `Week of ${fmtWeek(d.week)} · resets Sunday at midnight (ET), in <b id="lbCountdown">${fmtUntil(d.resetsAt)}</b>` : 'Total XP earned on 3nc0de.'}</div>
+    <div class="small muted">${tab === 'week' ? `Week of ${fmtWeek(d.week)} · resets Sunday at midnight (ET), in <b id="lbCountdown">${fmtUntil(d.resetsAt)}</b>` : 'Total XP earned on Etch.'}</div>
   </section>
   ${tab === 'week' ? `<section class="card lb-prize"><div class="lb-prize-ico">🎁</div><div class="spacer"><b>This week’s prize</b>
     <div class="small">🥇 <b>#1</b> when the week resets wins the <b>👑 Weekly Champion</b> title and the <b>gold Champion nameplate</b>, theirs to keep, plus a crown by their name. 🥈🥉 #2 and #3 make the Hall of Champions.</div></div></section>` : ''}
@@ -3037,8 +3106,8 @@ function pmTick() {
   document.querySelectorAll('[data-pm="arc"]').forEach((e) => e.setAttribute('stroke-dashoffset', String((+e.dataset.c * (1 - left / (PM.total || 1))).toFixed(1))));
   let title = PM_TITLE;
   if ((PM.screen === 'focusDone' || PM.screen === 'breakDone') && document.hidden) title = Date.now() % 2000 < 1000 ? (PM.screen === 'focusDone' ? '⏰ Focus done!' : '⏰ Break’s over!') : PM_TITLE;
-  else if (PM.running) title = `${t} · ${PM.mode === 'focus' ? 'Focus' : 'Break'} · 3nc0de`;
-  else if (PM.started) title = `⏸ ${t} · 3nc0de`;
+  else if (PM.running) title = `${t} · ${PM.mode === 'focus' ? 'Focus' : 'Break'} · Etch`;
+  else if (PM.started) title = `⏸ ${t} · Etch`;
   if (document.title !== title) document.title = title;
 }
 document.addEventListener('change', (e) => {
@@ -3123,12 +3192,12 @@ ACT['forget-key'] = async () => { await api('/api/settings', { gemini_key: '' })
 ACT.export = async () => {
   const visuals = await DB.all('visuals');
   const blob = new Blob([JSON.stringify({ app: 'encode', version: 2, exported: Date.now(), meta: S.meta, notebooks: S.notebooks, visuals })], { type: 'application/json' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `3nc0de-backup-${dayKey()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `etch-backup-${dayKey()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
 async function importData(e) {
   const f = e.target.files[0]; if (!f) return;
   try {
-    const data = JSON.parse(await f.text()); if (data.app !== 'encode') throw new Error('Not a 3nc0de backup');
+    const data = JSON.parse(await f.text()); if (data.app !== 'encode') throw new Error('Not an Etch backup');
     for (const v of data.visuals || []) await DB.put('visuals', v);
     for (const nb of data.notebooks) { const i = S.notebooks.findIndex((n) => n.id === nb.id); if (i >= 0) S.notebooks[i] = nb; else S.notebooks.push(nb); await DB.put('notebooks', nb); }
     S.meta.xp = Math.max(S.meta.xp, data.meta?.xp || 0); S.meta.days = { ...(data.meta?.days || {}), ...S.meta.days }; await saveMeta();
@@ -3143,7 +3212,7 @@ async function importData(e) {
     S.notebooks = data.notebooks || [];
     if (data.meta) S.meta = { key: 'stats', xp: 0, days: {}, ...data.meta };
   } catch {
-    $('#view').innerHTML = '<div class="card empty"><div class="big">🔒</div><h3>3nc0de can’t save in this browser</h3><p class="muted">Your browser is blocking website storage (private browsing, or cookies/site data turned off). Open Encode in a normal window, then reload.</p></div>';
+    $('#view').innerHTML = '<div class="card empty"><div class="big">🔒</div><h3>Etch can’t save in this browser</h3><p class="muted">Your browser is blocking website storage (private browsing, or cookies/site data turned off). Open Encode in a normal window, then reload.</p></div>';
     return;
   }
   render();
