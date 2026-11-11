@@ -242,11 +242,16 @@
     transcribe: obj({ title: S, text: S }),
     lesson: obj({
       intro: S, prior: SA,
-      steps: arr(obj({ title: S, explain: S, example: S, terms: arr(obj({ term: S, meaning: S })),
+      steps: arr(obj({ title: S, explain: S, example: S, paper: S, terms: arr(obj({ term: S, meaning: S })),
         check: obj({ type: { type: 'string', enum: ['mcq', 'short'] }, question: S, options: SA, answer: S, explanation: S }) })),
       summary: SA, mnemonic: S,
     }),
     help: obj({ answer: S }),
+    sectionTest: obj({
+      mcq: arr(obj({ question: S, options: SA, answer: S, explanation: S })),
+      paragraph: obj({ prompt: S, key_points: SA, model: S }),
+    }),
+    paragraph: obj({ score: N, verdict: { type: 'string', enum: ['correct', 'partial', 'incorrect'] }, covered: SA, missing: SA, misconceptions: SA, feedback: S }),
     videoPlan: obj({ searches: arr(obj({ query: S, concept_id: S, level: S, why: S, watch_for: SA })) }),
   };
   const TASK = {
@@ -263,6 +268,9 @@ understanding bit by bit:
   explain: 60–120 words, plain language, short sentences. Define every new term the first time it appears and
     **bold** the 1–3 key terms. A short bulleted list is fine when it helps.
   example: one concrete example, analogy or "picture this" (≤45 words), different from the section analogy.
+  paper: one small thing for the student to do on paper with a pen for this step (≤28 words), starting with a verb.
+    Alternate: odd steps = a quick sketch ("Sketch …: label …, draw arrows for …"), even steps = write it in their own
+    words without looking back ("Cover the screen and write …"). Make it specific to this step's content.
   terms: 0–3 key terms from this step with meanings of ≤15 words.
   check: one question testing understanding of THIS step (not trivia). Alternate types so the student does both:
     step 1 "mcq", step 2 "short", step 3 "mcq", and so on.
@@ -274,6 +282,20 @@ understanding bit by bit:
 - summary: 3–5 one-line takeaways. mnemonic: one vivid memory hook for the whole section.
 Only teach what the material supports; where it's thin, keep it simple rather than inventing details. Don't re-teach
 earlier sections or jump ahead to later ones. Don't cite slide or page numbers.`,
+    section_test: `Write a short end-of-section test for a student who just learned this section for the first time.
+- mcq: 4 questions, each with exactly 4 options in random order; answer = the exact text of the correct option.
+  Use plausible distractors based on common confusions. Mix: one recall, two understanding (why/how), and one
+  apply question (a short clinical or real-life scenario). Don't repeat the quick-check questions listed.
+  explanation: ≤35 words on why it's right; name the most tempting wrong option by its wording (never "option B").
+- paragraph: prompt = one question the student answers in a paragraph (4–6 sentences) that makes them explain and
+  connect the section's main ideas ("Explain how … and why …"). key_points: the 3–5 points a strong answer includes.
+  model: a model answer of ≤110 words in plain language.
+Only test what this section taught.`,
+    paragraph: `Grade a student's paragraph answer to an end-of-section question. Judge meaning, not wording; accept
+synonyms and minor misspellings. score 0–100 for how many key points are covered correctly and clearly, minus for
+wrong statements. verdict: "correct" if score ≥ 80, "partial" if 40–79, "incorrect" below 40. covered: the key points
+they got (short phrases). missing: key points they left out. misconceptions: anything they stated that is wrong
+([] if none). feedback: 2 warm, specific sentences to the student on what was strong and what to add next time.`,
     help: `A student is partway through one step of a guided lesson and tapped for help. Reply straight to them in 40–120
 words: plain language, warm, no preamble, no "Great question". Markdown is fine (bold, short lists).
 mode "simpler": re-explain the step as if to a smart 12-year-old, with a fresh everyday comparison.
@@ -379,6 +401,17 @@ For each topic, write the YouTube search that will surface a great teaching vide
         (p.after || []).length ? `Later sections (don't cover yet): ${p.after.join('; ')}` : 'This is the last section.',
         'Write the lesson for this section now.'].filter(Boolean).join('\n');
       return callJSON({ sources: p.sources, task: TASK.lesson, parts: msg, schema: SCHEMA.lesson, thinking: 1024, maxTokens: 12000, wait: 120000 });
+    },
+    section_test(p) {
+      const msg = [`Section: ${p.title || ''}`, 'Key points:', ...(p.points || []).map((x) => `- ${x}`),
+        (p.steps || []).length ? 'What the lesson taught, step by step:' : '', ...(p.steps || []).map((x) => `- ${x}`),
+        (p.used || []).length ? 'Quick-check questions already asked (don\'t repeat):' : '', ...(p.used || []).map((x) => `- ${x}`),
+        'Write the section test now.'].filter(Boolean).join('\n');
+      return callJSON({ sources: p.sources, task: TASK.section_test, parts: msg, schema: SCHEMA.sectionTest, thinking: 512, maxTokens: 6000, wait: 90000 });
+    },
+    paragraph(p) {
+      const msg = `Question: ${p.prompt || ''}\nKey points a strong answer includes:\n${(p.key_points || []).map((x) => `- ${x}`).join('\n')}\nModel answer: ${p.model || ''}\nStudent's paragraph:\n${p.response || '(blank)'}`;
+      return callJSON({ task: TASK.paragraph, parts: msg, schema: SCHEMA.paragraph, thinking: 0, maxTokens: 1500, tier: 'lite' });
     },
     lesson_help(p) {
       const earlier = (p.earlier || []).map((h) => `- (${h.mode}) ${h.a}`).join('\n');

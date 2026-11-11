@@ -404,7 +404,7 @@ function aiError(e) {
   if (e.code === 'no_key') openSettings();
 }
 async function refreshStatus() {
-  try { S.status = await api('/api/status', null, 'GET'); } catch { S.status = { claude: false, gemini: false, local: true, offline: true }; }
+  try { S.status = await api('/api/status', null, 'GET'); S.status.checked = true; } catch { S.status = { claude: false, gemini: false, local: true, offline: true }; }
   renderBanner();
 }
 
@@ -1339,6 +1339,8 @@ ACT['redo-pretest'] = async () => { const nb = curNb(); nb.pretest = { done: fal
 // a quick check (multiple choice or short answer) after every step, then cover-and-recall of the whole section.
 // Gemini writes each section's lesson the first time it's opened; it's saved in the notebook (nb.lessons).
 // The old all-at-once cards page is now the Revise tab.
+// Before writing a lesson or test, make sure we know whether the AI is on (right after a reload it may not be checked yet).
+async function aiReady() { if (!S.status.checked) { try { await refreshStatus(); } catch { /* offline */ } } return !!S.status.claude; }
 function lessonOf(nb, i) {
   const L = (nb.lessons || {})[i]; const c = nb.digest?.cards[i];
   return L && c && L.title === c.title ? L : null;
@@ -1346,7 +1348,7 @@ function lessonOf(nb, i) {
 function lessonStages(d) {
   const st = [{ k: 'intro' }];
   (d.steps || []).forEach((s, j) => { st.push({ k: 'step', j }); if (s.check?.question) st.push({ k: 'check', j }); });
-  st.push({ k: 'recall' }, { k: 'done' });
+  st.push({ k: 'recall' }, { k: 'test' }, { k: 'done' });
   return st;
 }
 function lessonInfo(nb, i) {
@@ -1354,12 +1356,39 @@ function lessonInfo(nb, i) {
   if (!L?.data) return { state: 'new', pct: 0, label: 'Not started' };
   const st = lessonStages(L.data); const checks = Object.values(L.checks || {});
   const right = checks.filter((x) => x.ok >= 1).length; const total = st.filter((s) => s.k === 'check').length;
-  if (L.done) return { state: 'done', pct: 100, label: total ? `Done ✓ · ${right}/${total} checks right` : 'Done ✓' };
+  if (L.done) return { state: 'done', pct: 100, label: total && checks.length ? `Done ✓ · ${right}/${total} quick checks right` : 'Done ✓' };
   return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: `In progress · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` };
 }
 const lessonNext = (nb) => { const n = nb.digest.cards.length; for (let i = 0; i < n; i++) if (lessonInfo(nb, i).state !== 'done') return i; return 0; };
 const lessonsDone = (nb) => nb.digest && nb.digest.cards.length > 0 && nb.digest.cards.every((_, i) => lessonInfo(nb, i).state === 'done');
 function cardShots(nb, c, n = 3) { const picked = refShots(nb, c.image_refs); return (picked.length ? picked : visualsFor(nb, c.source_ref, n)).slice(0, n); }
+
+// Paper and pen: writing in your own words, quick sketches (the "drawing effect") and writing from memory on a blank
+// page all make material stick better than rereading or copying. Lessons ask for one small paper task per step.
+const PAPER_KEY = 'encode-paper';
+const paperReady = () => { try { return localStorage.getItem(PAPER_KEY) === '1'; } catch { return false; } };
+const PAPER_WHY = `<details class="paper-why"><summary>Why paper?</summary><ul>
+  <li><b>Sketching sticks.</b> In memory studies, people who drew what they were learning remembered about twice as much as people who wrote it out, and drawing skill didn’t matter.</li>
+  <li><b>Your own words beat copying.</b> Note-taking helps when you rephrase ideas, not when you copy word for word. A pen makes you slow down and summarize.</li>
+  <li><b>A blank page is a test.</b> Writing everything you remember without looking is one of the best-proven ways to study (retrieval practice).</li>
+  <li><b>Fewer distractions.</b> Paper keeps your eyes off other tabs and notifications.</li></ul></details>`;
+function paperPrompt(x, j) {
+  if (x.paper) return x.paper;
+  return j % 2 === 0 ? `Sketch “${x.title}”: a quick labeled drawing or flowchart with arrows. Messy is fine.`
+    : `Cover the screen and write “${x.title}” in your own words, in one or two sentences.`;
+}
+ACT['paper-ready'] = () => { try { localStorage.setItem(PAPER_KEY, '1'); } catch { /* private mode */ } const nb = curNb(); if (route().arg !== '') lessonShow(nb, +route().arg); else render(); };
+ACT['paper-recall'] = () => { const nb = curNb(); UI.paperRecall = `${nb.id}:${route().arg}`; lessonShow(nb, +route().arg); };
+ACT['paper-recall-cancel'] = () => { UI.paperRecall = null; lessonShow(curNb(), +route().arg); };
+ACT['paper-recall-done'] = async () => {
+  const nb = curNb(); const i = +route().arg; const c = nb.digest.cards[i];
+  const hits = c.points.map((_, j) => !!document.querySelector(`#lessonStage input[data-pp="${j}"]`)?.checked);
+  UI.cardRecall[`${nb.id}:${i}`] = { revealed: true, text: '', hits, paper: true }; UI.paperRecall = null;
+  const ratio = hits.filter(Boolean).length / c.points.length;
+  (c.concept_ids || []).forEach((cid) => record(nb, cid, ratio));
+  await save(nb); lessonShow(nb, i);
+  await gainXP(2 + 3 * hits.filter(Boolean).length, 'paper recall');
+};
 
 function renderLessons(nb, el, arg) {
   nb.lessons ||= {}; UI.cardRecall ||= {}; UI.shots = UI.shots || {};
@@ -1372,6 +1401,7 @@ function renderLessons(nb, el, arg) {
     <div class="card overview lesson-hero">
       <h2>🎓 Learn it step by step</h2>
       <p class="muted" style="margin:0">New to this topic? Go through the sections in order. Each one teaches a few small pieces, checks you understood with a quick question, then has you recall the whole section. Stuck? Every step has buttons to explain it differently.</p>
+      <div class="paper-strip"><span class="paper-ico">📝</span><div><b>Get out paper and a pen first.</b> <span class="small muted">Each step gives you one thing to sketch or write, and you’ll finish each section by writing what you remember on a blank page. It makes it stick far better than reading.</span></div></div>
       <div class="lesson-sum"><div class="meter"><i style="width:${pct(done / Math.max(1, cards.length))}%"></i></div><span class="small muted">${done} of ${cards.length} sections done</span></div>
       <div class="row">${done === cards.length
         ? `<a class="btn primary" href="#/nb/${nb.id}/recall">🧠 All done! Start recall →</a><button class="btn" data-act="lesson-open" data-i="0">Go through it again</button>`
@@ -1449,7 +1479,7 @@ async function buildLesson(nb, i, { force = false } = {}) {
   (UI.lessonBusy ||= {})[key] = true;
   const prev = lessonOf(nb, i);
   let data = null;
-  if (S.status.claude) {
+  if (await aiReady()) {
     try {
       const cards = nb.digest.cards;
       data = cleanLesson(await ai('lesson', {
@@ -1505,7 +1535,8 @@ function lessonNextBtn(nb, i, L, s) {
   if (s.k === 'intro') return `<button class="btn primary lg" data-act="lesson-next">Start lesson →</button>`;
   if (s.k === 'step') return `<button class="btn primary" data-act="lesson-next">${L.data.steps[s.j].check?.question ? 'Got it → quick check' : 'Next →'}</button>`;
   if (s.k === 'check') return L.checks[s.j] ? '<button class="btn primary" data-act="lesson-next">Next →</button>' : `<button class="btn ghost" data-act="lesson-next">Skip this question</button>`;
-  if (s.k === 'recall') return `<button class="btn ${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'primary' : 'ghost'}" data-act="lesson-next">${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'Finish section →' : 'Skip to the end'}</button>`;
+  if (s.k === 'test') { const sc = testScore(L); const all = sc && sc.answered === sc.total && sc.para !== null; return `<button class="btn ${all ? 'primary' : 'ghost'}" data-act="lesson-next">${all ? 'See my results →' : 'Skip the test'}</button>`; }
+  if (s.k === 'recall') return `<button class="btn ${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'primary' : 'ghost'}" data-act="lesson-next">${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'Next: section test →' : 'Skip to the test'}</button>`;
   return '';
 }
 function lessonStageHTML(nb, i, L, s, steps) {
@@ -1516,6 +1547,10 @@ function lessonStageHTML(nb, i, L, s, steps) {
       <div class="lesson-text">${md(d.intro)}</div>
       ${shots.length ? shotStrip(`lesson${i}`, shots) : ''}
       ${d.prior?.length ? `<div class="lesson-box"><b>🧩 Quick refresher before you start</b><ul>${d.prior.map((p) => `<li>${md(p).replace(/^<p>|<\/p>\s*$/g, '')}</li>`).join('')}</ul></div>` : ''}
+      ${paperReady() ? `<div class="paper-strip slim"><span class="paper-ico">📝</span><span class="small">Paper and pen ready. Leave the left side for sketches and the right for words.</span></div>`
+        : `<div class="paper-box"><div class="paper-ico big">📝</div><div><b>Before you start: grab paper and a pen</b>
+          <p class="small" style="margin:4px 0 0">You’ll get the most out of this by writing as you go. Each step has one quick thing to <b>sketch</b> or <b>write in your own words</b>, and at the end you’ll write everything you remember on a blank part of the page.</p>
+          ${PAPER_WHY}<div class="row" style="margin-top:8px"><button class="btn primary sm" data-act="paper-ready">✓ I’ve got paper</button></div></div></div>`}
       <div class="lesson-box plain"><b>What you’ll learn</b><ol class="lesson-outline">${d.steps.map((x) => `<li>${esc(x.title)}</li>`).join('')}</ol>
         <div class="small muted">${steps} short steps · about ${Math.max(3, steps * 2)} min · a quick check after each</div></div>
       ${d.fallback ? `<div class="small muted">This is a simpler lesson made from your study cards. <a href="#" data-act="lesson-rewrite">✨ Rewrite it with AI</a></div>` : ''}`;
@@ -1526,6 +1561,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
     return `<div class="lesson-kicker">Step ${s.j + 1} of ${steps}</div><h2>${esc(x.title)}</h2>
       <div class="lesson-text">${md(x.explain)}</div>
       ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
+      <div class="paper-task"><span class="paper-ico">✍️</span><div><b>On your paper</b><div>${esc(paperPrompt(x, s.j))}</div></div></div>
       ${x.terms?.length ? `<dl class="lesson-terms">${x.terms.map((t) => `<div><dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd></div>`).join('')}</dl>` : ''}
       ${help.map((h) => `<div class="lesson-box help"><b>${lab[h.mode] || '💬'}${h.q ? `: “${esc(h.q)}”` : ''}</b><div>${md(h.a)}</div></div>`).join('')}
       ${busy ? '<div class="lesson-box help"><span class="spinner"></span> Thinking…</div>' : ''}
@@ -1562,25 +1598,144 @@ function lessonStageHTML(nb, i, L, s, steps) {
     if (!stR?.revealed) {
       return `<div class="lesson-kicker">Put it together</div><h2>Cover & recall</h2>
         <p class="muted">Without looking back, write down everything you remember about <b>${esc(c.title)}</b>. There are ${c.points.length} key points. Pulling it out of your head is what makes it stick.</p>
-        <textarea data-cr="${i}" rows="5" placeholder="From memory…">${esc(stR?.text || '')}</textarea>
-        <div class="row"><button class="btn primary" data-act="card-reveal" data-i="${i}">Reveal & compare</button></div>`;
+        ${UI.paperRecall === `${nb.id}:${i}` ? `<div class="paper-box"><div class="paper-ico big">✍️</div><div><b>Check your page</b>
+          <p class="small" style="margin:4px 0 8px">Tick each point you wrote down (close enough counts).</p>
+          <div class="paper-checks">${c.points.map((p, j) => `<label class="check"><input type="checkbox" data-pp="${j}"> <span>${esc(p)}</span></label>`).join('')}</div>
+          <div class="row" style="margin-top:10px"><button class="btn primary" data-act="paper-recall-done">Done checking</button><button class="btn ghost sm" data-act="paper-recall-cancel">Back</button></div></div></div>`
+        : `<div class="paper-strip"><span class="paper-ico">📝</span><div><b>Best on paper:</b> <span class="small">turn your notes face down and write everything on a blank part of the page. Then tap below to check it.</span></div></div>
+        <div class="row"><button class="btn primary" data-act="paper-recall">✍️ I wrote it on paper, check it</button></div>
+        <div class="small muted">Or type it here instead:</div>
+        <textarea data-cr="${i}" rows="4" placeholder="From memory…">${esc(stR?.text || '')}</textarea>
+        <div class="row"><button class="btn" data-act="card-reveal" data-i="${i}">Reveal & compare</button></div>`}`;
     }
     const got = stR.hits.filter(Boolean).length;
     return `<div class="lesson-kicker">Put it together</div><h2>Cover & recall</h2>
       <ul class="lesson-hits">${c.points.map((p, j) => `<li class="${stR.hits[j] ? 'hit' : 'miss'}">${stR.hits[j] ? '✓' : '✗'} ${esc(p)}</li>`).join('')}</ul>
-      <div class="small"><b>${got}/${c.points.length}</b> recalled. ${got === c.points.length ? 'Perfect! 🎉' : 'The red ones are your gaps. Reread them now, then try once more.'}</div>
+      <div class="small"><b>${got}/${c.points.length}</b> recalled. ${got === c.points.length ? 'Perfect! 🎉' : stR.paper ? 'Add the red ones to your page in a different color. Those are your gaps to review.' : 'The red ones are your gaps. Reread them now, then try once more.'}</div>
       <div class="row"><button class="btn sm" data-act="card-retry" data-i="${i}">Try again</button></div>`;
   }
+  if (s.k === 'test') return testStageHTML(nb, i, L);
   // done
   const inf = lessonInfo(nb, i); const n = nb.digest.cards.length; const nx = i + 1 < n ? i + 1 : null;
   return `<div class="lesson-done"><div class="pm-big-ico">✓</div><h2>Section complete</h2>
-    <p class="pm-xp">${esc(inf.label.replace(/^Done ✓ ·? ?/, '')) || 'Nice work'}</p></div>
+    <p class="pm-xp">${esc(inf.label.replace(/^Done ✓ ·? ?/, '')) || 'Nice work'}</p>
+    ${(() => { const sc = testScore(L); if (!sc || !sc.answered && sc.para === null) return ''; return `<div class="test-results"><span><b>${sc.right}/${sc.total}</b> multiple choice</span>${sc.para !== null ? `<span><b>${Math.round(sc.para)}%</b> paragraph</span>` : ''}</div>`; })()}</div>
     ${d.summary?.length ? `<div class="lesson-box plain"><b>Takeaways</b><ul>${d.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     ${d.mnemonic ? `<div class="lesson-box ex"><b>🧠 Memory hook</b><div>${esc(d.mnemonic)}</div></div>` : ''}
+    <div class="paper-strip slim"><span class="paper-ico">📄</span><span class="small">Keep this page. Write the section title at the top and add the memory hook. Tomorrow, try redrawing your sketches from memory before you look.</span></div>
     <div class="row lesson-done-row">${nx !== null ? `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">Next: ${esc(nb.digest.cards[nx].title)} →</button>`
       : `<a class="btn primary lg" href="#/nb/${nb.id}/recall">🧠 Last section done! Start recall →</a>`}
       <a class="btn" href="#/nb/${nb.id}/lessons">All sections</a></div>`;
 }
+
+// ── end-of-section test: 4 multiple-choice questions + one paragraph, written by the AI the first time you reach it ──
+function shuffleOpts(q) {
+  const opts = (q.options || []).filter(Boolean);
+  const hit = opts.find((o) => norm(o) === norm(q.answer)) || opts.find((o) => similar(o, q.answer) > 0.85);
+  if (opts.length < 2 || !hit) return null;
+  for (let k = opts.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [opts[k], opts[r]] = [opts[r], opts[k]]; }
+  return { question: q.question, options: opts, answer: hit, explanation: q.explanation || '' };
+}
+function localTest(nb, i, L) {
+  const c = nb.digest.cards[i];
+  const mcq = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.type === 'mcq').map(shuffleOpts).filter(Boolean).slice(0, 4);
+  return { fallback: true, mcq, paragraph: { prompt: `In a paragraph, explain ${c.title.toLowerCase()} in your own words. Connect the ideas and say why they matter.`, key_points: c.points, model: '' } };
+}
+async function buildTest(nb, i) {
+  const L = lessonOf(nb, i); const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
+  (UI.testBusy ||= {})[key] = true;
+  let t = null;
+  if (await aiReady()) {
+    try {
+      const r = await ai('section_test', { sources: aiSources(nb), title: c.title, points: c.points,
+        steps: (L.data.steps || []).map((s) => `${s.title}: ${String(s.explain || '').slice(0, 220)}`),
+        used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean) });
+      const mcq = (r.mcq || []).map(shuffleOpts).filter(Boolean);
+      if (!mcq.length || !r.paragraph?.prompt) throw new Error('The test came back incomplete. Try again.');
+      t = { mcq, paragraph: r.paragraph };
+    } catch (e) { if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the section test with AI (${e.message}). Using a shorter one.`, 'err'); }
+  }
+  L.test = { ...(t || localTest(nb, i, L)), answers: {}, para: null };
+  delete UI.testBusy[key]; await save(nb);
+}
+function testScore(L) {
+  const T = L.test; if (!T) return null;
+  const right = T.mcq.filter((q, k) => T.answers[k] === q.answer).length;
+  return { right, total: T.mcq.length, answered: Object.keys(T.answers).length, para: T.para?.result?.score ?? null };
+}
+function testStageHTML(nb, i, L) {
+  const key = `${nb.id}:${i}`; const T = L.test;
+  if (!T) {
+    if (!UI.testBusy?.[key]) buildTest(nb, i).then(() => { if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i); });
+    return `<div class="lesson-kicker">Section test</div><h2>Writing your test…</h2><div class="spinner lg" style="margin:10px auto"></div>
+      <p class="muted" style="text-align:center;margin:0">4 multiple-choice questions and one paragraph question. Usually about 10 seconds.</p>`;
+  }
+  const sc = testScore(L); const P = T.para; const grading = UI.paraGrading === key;
+  const mcqHTML = T.mcq.map((q, k) => {
+    const a = T.answers[k];
+    return `<div class="test-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${esc(q.question)}</b></div>
+      <div class="lesson-opts">${q.options.map((o, n) => {
+        const cls = a !== undefined ? (o === q.answer ? 'right' : a === o ? 'wrong' : 'dim') : '';
+        return `<button class="opt ${cls}" data-act="test-mcq" data-q="${k}" data-o="${n}" ${a !== undefined ? 'disabled' : ''}><span class="opt-l">${'ABCD'[n] || n + 1}</span><span>${esc(o)}</span></button>`;
+      }).join('')}</div>
+      ${a !== undefined && q.explanation ? `<div class="small test-exp ${a === q.answer ? 'ok' : 'no'}">${a === q.answer ? '✓' : '✗'} ${esc(q.explanation)}</div>` : ''}</div>`;
+  }).join('');
+  const R = P?.result;
+  const paraHTML = R ? `<div class="lesson-mine"><span class="small muted">Your paragraph</span><div>${esc(P.text)}</div></div>
+      <div class="verdict ${R.verdict}"><div class="row between"><h3>${{ correct: '✓ Strong answer', partial: '◐ Good start', incorrect: '✗ Needs more' }[R.verdict] || 'Graded'}</h3><b>${Math.round(R.score)}%</b></div>
+        <div class="meter" style="margin:6px 0 8px"><i style="width:${Math.round(R.score)}%"></i></div>
+        ${R.feedback ? `<div>${esc(R.feedback)}</div>` : ''}
+        ${R.covered?.length ? `<div class="small" style="margin-top:8px"><b>You covered:</b><ul class="list-good">${R.covered.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${R.missing?.length ? `<div class="small"><b>Add next time:</b><ul>${R.missing.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${R.misconceptions?.length ? `<div class="small"><b>Watch out:</b><ul>${R.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${T.paragraph.model ? `<details class="small" style="margin-top:6px"><summary>See a model answer</summary><p style="margin:6px 0 0">${esc(T.paragraph.model)}</p></details>` : ''}</div>`
+    : `<textarea id="lessonP" rows="6" placeholder="Write 4–6 sentences…" ${grading ? 'disabled' : ''}>${esc(UI.paraDraft?.[key] || '')}</textarea>
+      <div class="row"><button class="btn primary" data-act="test-para" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Grading…' : 'Submit paragraph'}</button>
+        <span class="small muted">${wordCount(UI.paraDraft?.[key] || '')} words</span></div>`;
+  return `<div class="lesson-kicker">Section test</div><h2>Show what you learned</h2>
+    <p class="muted" style="margin:0">No peeking at your notes. ${sc.answered}/${sc.total} answered${sc.answered ? ` · ${sc.right} right` : ''}.</p>
+    ${T.fallback && !sc.answered && !T.para ? '<div class="small muted">This is a shorter test made from your lesson. <a href="#" data-act="test-rewrite">✨ Write a full test with AI</a></div>' : ''}
+    <div class="test-part"><h3>Part 1 · Multiple choice</h3>${mcqHTML}</div>
+    <div class="test-part"><h3>Part 2 · Paragraph</h3>
+      <div class="test-q"><b>${esc(T.paragraph.prompt)}</b>
+      <div class="paper-strip slim" style="margin:8px 0"><span class="paper-ico">📝</span><span class="small">Tip: draft it on your paper first (a few bullet points), then write it out here.</span></div>
+      ${paraHTML}</div></div>`;
+}
+ACT['test-rewrite'] = async () => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); if (!L) return;
+  if (!(await aiReady())) { toast('Writing tests needs the AI tutor. See Settings.', 'err'); return openSettings(); }
+  delete L.test; lessonShow(nb, i);
+};
+ACT['test-mcq'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T) return;
+  const k = +el.dataset.q; if (T.answers[k] !== undefined) return;
+  const q = T.mcq[k]; const pick = q.options[+el.dataset.o]; T.answers[k] = pick;
+  lessonRecord(nb, i, k, pick === q.answer ? 1 : 0); await save(nb);
+  const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y);
+  if (pick === q.answer) gainXP(3, 'section test');
+};
+document.addEventListener('input', (e) => { if (e.target.id === 'lessonP') { const key = `${route().id}:${route().arg}`; (UI.paraDraft ||= {})[key] = e.target.value; const w = e.target.parentElement.querySelector('.row .small.muted'); if (w) w.textContent = `${wordCount(e.target.value)} words`; } });
+ACT['test-para'] = async () => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T || T.para?.result) return;
+  const key = `${nb.id}:${i}`; const text = ($('#lessonP')?.value || '').trim();
+  if (wordCount(text) < 8) { toast('Write a few sentences first (at least 8 words).'); $('#lessonP')?.focus(); return; }
+  (UI.paraDraft ||= {})[key] = text; UI.paraGrading = key;
+  const keep = () => { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); };
+  keep();
+  let r = null;
+  if (S.status.claude) { try { r = await ai('paragraph', { prompt: T.paragraph.prompt, key_points: T.paragraph.key_points, model: T.paragraph.model, response: text }); } catch (e) { aiError(e); } }
+  if (!r || typeof r.score !== 'number') {
+    const hits = (T.paragraph.key_points || []).filter((p) => coverage(text, p) >= 0.4);
+    const score = Math.round(100 * hits.length / Math.max(1, T.paragraph.key_points.length));
+    r = { score, verdict: score >= 80 ? 'correct' : score >= 40 ? 'partial' : 'incorrect', covered: hits, missing: T.paragraph.key_points.filter((p) => !hits.includes(p)), misconceptions: [], feedback: 'Checked by matching key points (the AI grader wasn’t available).' };
+  }
+  r.score = Math.max(0, Math.min(100, r.score));
+  T.para = { text, result: r }; UI.paraGrading = null; delete UI.paraDraft[key];
+  (nb.digest.cards[i].concept_ids || []).forEach((cid) => record(nb, cid, r.score / 100));
+  await save(nb);
+  if (route().tab === 'lessons' && +route().arg === i) keep();
+  const xp = Math.round(r.score / 10); if (xp) gainXP(xp, 'paragraph');
+};
 
 // Moving between steps re-draws only the lesson and keeps it in view.
 function lessonShow(nb, i) {

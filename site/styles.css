@@ -868,3 +868,29 @@ html.pm-open { overflow: hidden; }
   .lesson-nav .btn { flex: 1; } .lesson-nav > span:empty { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .stage-in, .stage-back, .lesson-box.help { animation: none; } .lesson-tile { transition: none; } }
+
+/* paper and pen prompts */
+.paper-ico { font-size: 1.3rem; line-height: 1; flex: none; } .paper-ico.big { font-size: 2rem; }
+.paper-strip { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 12px;
+  background: color-mix(in srgb, #facc15 9%, var(--surface-2)); border: 1px solid color-mix(in srgb, #facc15 35%, var(--border)); }
+.paper-strip.slim { padding: 8px 12px; align-items: center; }
+.paper-box { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: 14px;
+  background: color-mix(in srgb, #facc15 11%, var(--surface-2)); border: 1.5px solid color-mix(in srgb, #facc15 55%, var(--border)); }
+.paper-task { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px;
+  background: repeating-linear-gradient(transparent 0 23px, color-mix(in srgb, #facc15 14%, transparent) 23px 24px), color-mix(in srgb, #facc15 7%, var(--surface-2));
+  border: 1px dashed color-mix(in srgb, #facc15 55%, var(--border)); }
+.paper-task b { color: #fde68a; }
+.paper-why { margin-top: 8px; font-size: .88rem; } .paper-why summary { cursor: pointer; color: #fde68a; font-weight: 600; }
+.paper-why ul { margin: 6px 0 0; padding-left: 18px; } .paper-why li { margin: 4px 0; }
+.paper-checks { display: grid; gap: 8px; } .paper-checks label { align-items: flex-start; }
+.paper-checks input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+
+/* end-of-section test */
+.test-part { display: grid; gap: 12px; padding-top: 6px; border-top: 1px solid var(--border); }
+.test-part h3 { margin: 6px 0 0; font: 700 .85rem "Chakra Petch", var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.test-q { display: grid; gap: 6px; }
+.test-qh { display: flex; gap: 10px; align-items: flex-start; }
+.test-n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .85rem; color: #04121f; background: #3dd6f5; }
+.test-exp { padding: 8px 12px; border-radius: 10px; } .test-exp.ok { background: var(--good-soft); } .test-exp.no { background: var(--bad-soft); }
+.test-results { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.test-results span { padding: 6px 14px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
