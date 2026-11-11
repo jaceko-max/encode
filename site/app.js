@@ -1713,11 +1713,13 @@ function lessonStageHTML(nb, i, L, s, steps) {
     const hintBox = hinting ? `<div class="verdict ${v} hint-box"><h3>${v === 'partial' ? '◐ Almost there' : '✗ Not quite'}</h3>
         <div>💡 <b>Hint:</b> ${esc(ch.hint || `Reread step ${s.j + 1} and look at the bold words.`)}</div>
         <div class="small muted" style="margin-top:4px">${ch.type === 'mcq' ? 'Pick another option.' : 'Change your answer and check again.'}</div>
-        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Reread the step</button><button class="btn sm ghost" data-act="lesson-reveal">Show me the answer</button></div></div>` : '';
+        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Reread the step</button><button class="btn sm ghost" data-act="lesson-reveal">Show me the answer</button>${ch.type === 'short' && v !== 'correct' ? '<button class="btn sm ghost" data-act="lesson-override" title="If the grader got it wrong, count your answer as correct">✋ I was right, count it</button>' : ''}</div></div>` : '';
     const finalBox = fin ? `<div class="verdict ${v}"><h3>${raw.revealed && v !== 'correct' ? '👀 Here’s the answer' : head}${raw.tries > 1 && v === 'correct' ? ' on the second try' : ''}</h3>
         ${raw.feedback && !raw.revealed ? `<div>${esc(raw.feedback)}</div>` : ''}
         ${ch.type === 'short' || raw.revealed ? `<div class="small" style="margin-top:6px"><b>Answer:</b> ${esc(ch.answer)}</div>` : ''}
         ${ch.explanation ? `<div class="small" style="margin-top:6px">${esc(ch.explanation)}</div>` : ''}
+        ${raw.overridden ? '<div class="small muted" style="margin-top:6px">✋ You marked this correct.</div>' : ''}
+        ${v !== 'correct' && ch.type === 'short' ? `<div class="row" style="margin-top:8px">${'<button class="btn sm ghost" data-act="lesson-override" title="If the grader got it wrong, count your answer as correct">✋ I was right, count it</button>'}</div>` : ''}
         ${raw.conf === 'sure' && (raw.first ?? raw.ok) < 1 ? '<div class="small" style="margin-top:6px">⚠️ You were sure at first, so this one comes back in Recall today.</div>' : (raw.first ?? raw.ok) < 1 ? '<div class="small muted" style="margin-top:6px">🧠 This one comes back in Recall tomorrow.</div>' : ''}</div>` : '';
     return `<div class="lesson-kicker">Quick check · step ${s.j + 1} of ${steps} · ${ch.type === 'mcq' ? 'multiple choice' : 'short answer'}${hinting ? ' · second try' : ''}</div>
       <h2 class="lesson-q">${esc(ch.question)}</h2>${confRow}${body}${hintBox}${finalBox}`;
@@ -2044,8 +2046,15 @@ function deepQHTML(nb, i, D, q, k) {
   return `<div class="test-q deep-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${esc(q.question)} ${q.beyond ? BEYOND : ''}</b></div>${body}
     ${a ? `<div class="verdict ${v}"><h3>${head}</h3>${a.feedback ? `<div class="small">${esc(a.feedback)}</div>` : ''}
       ${q.type === 'short' ? `<div class="small" style="margin-top:6px"><b>Answer:</b> ${esc(q.answer)}</div>` : ''}
-      ${q.explanation ? `<div class="small" style="margin-top:6px">${esc(q.explanation)}</div>` : ''}</div>` : ''}</div>`;
+      ${q.explanation ? `<div class="small" style="margin-top:6px">${esc(q.explanation)}</div>` : ''}
+      ${q.type === 'short' && v !== 'correct' ? `<div class="row" style="margin-top:8px"><button class="btn sm ghost" data-act="deep-override" data-q="${k}">✋ I was right, count it</button></div>` : a.overridden ? '<div class="small muted" style="margin-top:6px">✋ You marked this correct.</div>' : ''}</div>` : ''}</div>`;
 }
+ACT['deep-override'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const D = deepOf(nb, i); const k = +el.dataset.q; const a = D?.answers[k]; if (!a || a.verdict === 'correct') return;
+  Object.assign(a, { verdict: 'correct', ok: 1, overridden: true, feedback: '' });
+  nb.cards = nb.cards.filter((c) => !(c.from === 'deep' && norm(c.question) === norm(D.data.questions[k].question))); // not a miss after all
+  await save(nb); deepRedraw(nb, i); toast('Counted as correct ✓');
+};
 function deepRedraw(nb, i) { const y = window.scrollY; renderDeep(nb, $('#tab'), i); window.scrollTo(0, y); }
 document.addEventListener('input', (e) => { const k = e.target.dataset?.dq; if (k !== undefined) (UI.deepDraft ||= {})[`${route().arg}:${k}`] = e.target.value; });
 ACT['deep-jump'] = (el) => { const t = document.getElementById(el.dataset.to); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 130, behavior: 'smooth' }); };
@@ -2239,6 +2248,16 @@ ACT['lesson-conf'] = (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
   (UI.lessonConf ||= {})[`${nb.id}:${i}:${s.j}`] = el.dataset.c;
   el.closest('.conf-row')?.querySelectorAll('[data-act="lesson-conf"]').forEach((b) => b.classList.toggle('on', b === el)); // no redraw: keeps what you typed
+};
+// When the grader is too strict: the student can count their answer as correct (no XP for it, but it stops it
+// counting as a miss, so it isn't scheduled as a mistake).
+ACT['lesson-override'] = async () => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; const r = L.checks[s.j];
+  if (s.k !== 'check' || !r?.verdict || r.verdict === 'correct') return;
+  const firstTry = (r.tries || 1) === 1;
+  if (firstTry) { const cid = itemConcept(nb, i, L.data.steps[s.j].check); const st = nb.conceptStats[cid]; if (st) st.right = Math.min(st.attempts, st.right + (1 - (r.ok || 0))); r.first = 1; }
+  Object.assign(r, { verdict: 'correct', ok: 1, overridden: true, feedback: '' });
+  await save(nb); lessonShow(nb, i); toast('Counted as correct ✓');
 };
 ACT['lesson-reveal'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; const r = L.checks[s.j];
