@@ -493,7 +493,7 @@ function renderPage() {
     if (!nb) return go('#/');
     return renderNotebook(nb, r.tab || nextStep(nb).tab, r.arg);
   }
-  if (r.view === 'course') return renderCourse(r.course);
+  if (r.view === 'course') return go('#/'); // mixed-course review was removed; old links go home
   if (r.view === 'profile') return renderProfile();
   if (r.view === 'leaderboard') return renderLeaderboard();
   renderHome();
@@ -780,12 +780,6 @@ function renderHome() {
   </section>
   ${nbs.length ? `<section class="section" id="pomoHome">${pomoHomeHTML()}</section>` : ''}
 
-  ${(() => {
-    const courses = [...new Set(nbs.filter((n) => n.digest).map((n) => n.course || 'Other'))].map((c) => ({ c, list: courseNotebooks(c) })).filter((x) => x.list.length > 1);
-    return courses.length ? `<section class="section"><h2>📚 Courses</h2><p class="muted small">Cumulative exam coming? Review every lecture in a course mixed together.</p><div class="grid">${courses.map(({ c, list }) => {
-      const due = list.reduce((a, n) => a + dueCards(n).length, 0); const m = list.reduce((a, n) => a + nbMastery(n), 0) / list.length;
-      return `<a class="card nb-card" href="#/course/${encodeURIComponent(c)}" style="color:inherit"><h3>${esc(c)}</h3><div class="meta"><span>📄 ${list.length} lectures</span><span>🧠 ${due} due</span><span>🎯 ${pct(m)}%</span></div><div class="meter"><i style="width:${pct(m)}%"></i></div><div class="small" style="color:var(--accent);font-weight:600">Mixed review →</div></a>`; }).join('')}</div></section>` : '';
-  })()}
 
   <section class="section">
     <div class="row between"><h2>Your notebooks</h2></div>
@@ -1341,6 +1335,7 @@ ACT['redo-pretest'] = async () => { const nb = curNb(); nb.pretest = { done: fal
 // The old all-at-once cards page is now the Revise tab.
 // Before writing a lesson or test, make sure we know whether the AI is on (right after a reload it may not be checked yet).
 async function aiReady() { if (!S.status.checked) { try { await refreshStatus(); } catch { /* offline */ } } return !!S.status.claude; }
+const LESSON_V = 2; // v2 = shorter, bullet-first lessons
 function lessonOf(nb, i) {
   const L = (nb.lessons || {})[i]; const c = nb.digest?.cards[i];
   return L && c && L.title === c.title ? L : null;
@@ -1368,10 +1363,9 @@ function cardShots(nb, c, n = 3) { const picked = refShots(nb, c.image_refs); re
 const PAPER_KEY = 'encode-paper';
 const paperReady = () => { try { return localStorage.getItem(PAPER_KEY) === '1'; } catch { return false; } };
 const PAPER_WHY = `<details class="paper-why"><summary>Why paper?</summary><ul>
-  <li><b>Sketching sticks.</b> In memory studies, people who drew what they were learning remembered about twice as much as people who wrote it out, and drawing skill didn’t matter.</li>
-  <li><b>Your own words beat copying.</b> Note-taking helps when you rephrase ideas, not when you copy word for word. A pen makes you slow down and summarize.</li>
-  <li><b>A blank page is a test.</b> Writing everything you remember without looking is one of the best-proven ways to study (retrieval practice).</li>
-  <li><b>Fewer distractions.</b> Paper keeps your eyes off other tabs and notifications.</li></ul></details>`;
+  <li><b>Sketching sticks.</b> People remember about twice as much of what they draw. Skill doesn’t matter.</li>
+  <li><b>Own words beat copying.</b> A pen makes you slow down and summarize.</li>
+  <li><b>A blank page is a test.</b> Writing from memory is one of the best-proven study methods.</li></ul></details>`;
 function paperPrompt(x, j) {
   if (x.paper) return x.paper;
   return j % 2 === 0 ? `Sketch “${x.title}”: a quick labeled drawing or flowchart with arrows. Messy is fine.`
@@ -1400,13 +1394,13 @@ function renderLessons(nb, el, arg) {
   el.innerHTML = `<div class="stack">
     <div class="card overview lesson-hero">
       <h2>🎓 Learn it step by step</h2>
-      <p class="muted" style="margin:0">New to this topic? Go through the sections in order. Each one teaches a few small pieces, checks you understood with a quick question, then has you recall the whole section. Stuck? Every step has buttons to explain it differently.</p>
-      <div class="paper-strip"><span class="paper-ico">📝</span><div><b>Get out paper and a pen first.</b> <span class="small muted">Each step gives you one thing to sketch or write, and you’ll finish each section by writing what you remember on a blank page. It makes it stick far better than reading.</span></div></div>
+      <p class="muted" style="margin:0">Small steps, a quick check after each, a short test at the end.</p>
+      <div class="paper-strip slim"><span class="paper-ico">📝</span><span><b>Have paper and a pen ready.</b> <span class="small muted">You’ll sketch and jot as you go.</span></span></div>
       <div class="lesson-sum"><div class="meter"><i style="width:${pct(done / Math.max(1, cards.length))}%"></i></div><span class="small muted">${done} of ${cards.length} sections done</span></div>
       <div class="row">${done === cards.length
         ? `<a class="btn primary" href="#/nb/${nb.id}/recall">🧠 All done! Start recall →</a><button class="btn" data-act="lesson-open" data-i="0">Go through it again</button>`
         : `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">${started ? 'Continue' : 'Start'}: ${esc(cards[nx].title)} →</button>`}</div>
-      <div class="small muted">Already learned this? <a href="#/nb/${nb.id}/learn">Revise</a> shows every card at once, with cover and recall.</div>
+      <div class="small muted">Already know it? <a href="#/nb/${nb.id}/learn">Revise →</a></div>
     </div>
     <div class="lesson-path">${cards.map((c, i) => {
       const inf = infos[i]; const shot = cardShots(nb, c, 1)[0];
@@ -1495,7 +1489,7 @@ async function buildLesson(nb, i, { force = false } = {}) {
   }
   if (!data) data = localLesson(nb, c);
   if (data.fallback && prev?.data && !prev.data.fallback && force) data = prev.data; // a failed rewrite keeps the good one
-  nb.lessons[i] = { title: c.title, data, pos: force ? 0 : prev?.pos || 0, checks: force ? {} : prev?.checks || {}, help: force ? {} : prev?.help || {}, done: !force && !!prev?.done };
+  nb.lessons[i] = { v: LESSON_V, title: c.title, data, pos: force ? 0 : prev?.pos || 0, checks: force ? {} : prev?.checks || {}, help: force ? {} : prev?.help || {}, done: !force && !!prev?.done };
   delete UI.lessonBusy[key];
   await save(nb);
 }
@@ -1508,7 +1502,9 @@ ACT['lesson-rewrite'] = async () => {
 };
 
 function renderLesson(nb, el, i) {
-  const c = nb.digest.cards[i]; const L = lessonOf(nb, i); const key = `${nb.id}:${i}`;
+  const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`; let L = lessonOf(nb, i);
+  // an older, wordier lesson nobody has started yet gets rewritten in the newer, shorter style
+  if (L?.data && !L.data.fallback && (L.v || 1) < LESSON_V && !L.done && !(L.pos > 0) && !Object.keys(L.checks || {}).length && S.status.claude) { delete L.data; L = null; }
   if (!L?.data) {
     el.innerHTML = `<div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a><span class="small muted">Section ${i + 1} of ${nb.digest.cards.length}</span></div>
       <div class="card building lesson-card"><div style="font-size:2.6rem">${esc(c.emoji)}</div><h2 style="margin:6px 0">${esc(c.title)}</h2>
@@ -1546,13 +1542,13 @@ function lessonStageHTML(nb, i, L, s, steps) {
     return `<div class="lesson-emoji">${esc(c.emoji)}</div><h2>${esc(c.title)}</h2>
       <div class="lesson-text">${md(d.intro)}</div>
       ${shots.length ? shotStrip(`lesson${i}`, shots) : ''}
-      ${d.prior?.length ? `<div class="lesson-box"><b>🧩 Quick refresher before you start</b><ul>${d.prior.map((p) => `<li>${md(p).replace(/^<p>|<\/p>\s*$/g, '')}</li>`).join('')}</ul></div>` : ''}
-      ${paperReady() ? `<div class="paper-strip slim"><span class="paper-ico">📝</span><span class="small">Paper and pen ready. Leave the left side for sketches and the right for words.</span></div>`
-        : `<div class="paper-box"><div class="paper-ico big">📝</div><div><b>Before you start: grab paper and a pen</b>
-          <p class="small" style="margin:4px 0 0">You’ll get the most out of this by writing as you go. Each step has one quick thing to <b>sketch</b> or <b>write in your own words</b>, and at the end you’ll write everything you remember on a blank part of the page.</p>
-          ${PAPER_WHY}<div class="row" style="margin-top:8px"><button class="btn primary sm" data-act="paper-ready">✓ I’ve got paper</button></div></div></div>`}
-      <div class="lesson-box plain"><b>What you’ll learn</b><ol class="lesson-outline">${d.steps.map((x) => `<li>${esc(x.title)}</li>`).join('')}</ol>
-        <div class="small muted">${steps} short steps · about ${Math.max(3, steps * 2)} min · a quick check after each</div></div>
+      <div class="lesson-outline-row">${d.steps.map((x, k) => `<span class="lesson-chip"><b>${k + 1}</b>${esc(x.title)}</span>`).join('')}</div>
+      <div class="small muted">${steps} steps · about ${Math.max(3, steps * 2)} min</div>
+      ${d.prior?.length ? `<details class="lesson-refresh"><summary>🧩 Quick refresher (${d.prior.length})</summary><ul>${d.prior.map((p) => `<li>${md(p).replace(/^<p>|<\/p>\s*$/g, '')}</li>`).join('')}</ul></details>` : ''}
+      ${paperReady() ? ''
+        : `<div class="paper-box"><div class="paper-ico big">📝</div><div><b>Grab paper and a pen</b>
+          <p class="small" style="margin:2px 0 0">Each step has one thing to sketch or jot down.</p>
+          ${PAPER_WHY}<div class="row" style="margin-top:8px"><button class="btn primary sm" data-act="paper-ready">✓ Ready</button></div></div></div>`}
       ${d.fallback ? `<div class="small muted">This is a simpler lesson made from your study cards. <a href="#" data-act="lesson-rewrite">✨ Rewrite it with AI</a></div>` : ''}`;
   }
   if (s.k === 'step') {
@@ -1561,15 +1557,15 @@ function lessonStageHTML(nb, i, L, s, steps) {
     return `<div class="lesson-kicker">Step ${s.j + 1} of ${steps}</div><h2>${esc(x.title)}</h2>
       <div class="lesson-text">${md(x.explain)}</div>
       ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
-      <div class="paper-task"><span class="paper-ico">✍️</span><div><b>On your paper</b><div>${esc(paperPrompt(x, s.j))}</div></div></div>
+      <div class="paper-task"><span class="paper-ico">✍️</span><div>${esc(paperPrompt(x, s.j))}</div></div>
       ${x.terms?.length ? `<dl class="lesson-terms">${x.terms.map((t) => `<div><dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd></div>`).join('')}</dl>` : ''}
       ${help.map((h) => `<div class="lesson-box help"><b>${lab[h.mode] || '💬'}${h.q ? `: “${esc(h.q)}”` : ''}</b><div>${md(h.a)}</div></div>`).join('')}
       ${busy ? '<div class="lesson-box help"><span class="spinner"></span> Thinking…</div>' : ''}
-      <div class="lesson-help-row"><span class="small muted">Not clicking?</span>
-        <button class="btn sm" data-act="lesson-help" data-mode="simpler" ${busy ? 'disabled' : ''}>🧒 Explain it simpler</button>
-        <button class="btn sm" data-act="lesson-help" data-mode="example" ${busy ? 'disabled' : ''}>💡 Another example</button>
-        <button class="btn sm" data-act="lesson-ask" ${busy ? 'disabled' : ''}>❓ Ask a question</button></div>
-      ${UI.lessonAsk === `${nb.id}:${i}:${s.j}` ? `<div class="lesson-ask"><textarea id="lessonQ" rows="2" placeholder="What’s confusing? e.g. Why does the dorsal root only carry sensory signals?"></textarea>
+      <div class="lesson-help-row">
+        <button class="btn sm ghost" data-act="lesson-help" data-mode="simpler" ${busy ? 'disabled' : ''}>🧒 Simpler</button>
+        <button class="btn sm ghost" data-act="lesson-help" data-mode="example" ${busy ? 'disabled' : ''}>💡 Example</button>
+        <button class="btn sm ghost" data-act="lesson-ask" ${busy ? 'disabled' : ''}>❓ Ask</button></div>
+      ${UI.lessonAsk === `${nb.id}:${i}:${s.j}` ? `<div class="lesson-ask"><textarea id="lessonQ" rows="2" placeholder="What’s confusing?"></textarea>
         <div class="row"><button class="btn primary sm" data-act="lesson-help" data-mode="question">Ask</button><button class="btn ghost sm" data-act="lesson-ask-cancel">Cancel</button></div></div>` : ''}`;
   }
   if (s.k === 'check') {
@@ -1597,21 +1593,20 @@ function lessonStageHTML(nb, i, L, s, steps) {
     const stR = UI.cardRecall[`${nb.id}:${i}`];
     if (!stR?.revealed) {
       return `<div class="lesson-kicker">Put it together</div><h2>Cover & recall</h2>
-        <p class="muted">Without looking back, write down everything you remember about <b>${esc(c.title)}</b>. There are ${c.points.length} key points. Pulling it out of your head is what makes it stick.</p>
+        <p class="muted" style="margin:0">Notes face down. Write the ${c.points.length} key points of <b>${esc(c.title)}</b> from memory.</p>
         ${UI.paperRecall === `${nb.id}:${i}` ? `<div class="paper-box"><div class="paper-ico big">✍️</div><div><b>Check your page</b>
-          <p class="small" style="margin:4px 0 8px">Tick each point you wrote down (close enough counts).</p>
+          <p class="small" style="margin:2px 0 8px">Tick what you wrote (close enough counts).</p>
           <div class="paper-checks">${c.points.map((p, j) => `<label class="check"><input type="checkbox" data-pp="${j}"> <span>${esc(p)}</span></label>`).join('')}</div>
           <div class="row" style="margin-top:10px"><button class="btn primary" data-act="paper-recall-done">Done checking</button><button class="btn ghost sm" data-act="paper-recall-cancel">Back</button></div></div></div>`
-        : `<div class="paper-strip"><span class="paper-ico">📝</span><div><b>Best on paper:</b> <span class="small">turn your notes face down and write everything on a blank part of the page. Then tap below to check it.</span></div></div>
-        <div class="row"><button class="btn primary" data-act="paper-recall">✍️ I wrote it on paper, check it</button></div>
-        <div class="small muted">Or type it here instead:</div>
+        : `<div class="row"><button class="btn primary" data-act="paper-recall">✍️ Done on paper, check it</button></div>
+        <div class="small muted">Or type it:</div>
         <textarea data-cr="${i}" rows="4" placeholder="From memory…">${esc(stR?.text || '')}</textarea>
         <div class="row"><button class="btn" data-act="card-reveal" data-i="${i}">Reveal & compare</button></div>`}`;
     }
     const got = stR.hits.filter(Boolean).length;
     return `<div class="lesson-kicker">Put it together</div><h2>Cover & recall</h2>
       <ul class="lesson-hits">${c.points.map((p, j) => `<li class="${stR.hits[j] ? 'hit' : 'miss'}">${stR.hits[j] ? '✓' : '✗'} ${esc(p)}</li>`).join('')}</ul>
-      <div class="small"><b>${got}/${c.points.length}</b> recalled. ${got === c.points.length ? 'Perfect! 🎉' : stR.paper ? 'Add the red ones to your page in a different color. Those are your gaps to review.' : 'The red ones are your gaps. Reread them now, then try once more.'}</div>
+      <div class="small"><b>${got}/${c.points.length}</b> recalled. ${got === c.points.length ? 'Perfect! 🎉' : stR.paper ? 'Add the red ones to your page in another color.' : 'Red = gaps. Reread them, then try again.'}</div>
       <div class="row"><button class="btn sm" data-act="card-retry" data-i="${i}">Try again</button></div>`;
   }
   if (s.k === 'test') return testStageHTML(nb, i, L);
@@ -1622,7 +1617,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
     ${(() => { const sc = testScore(L); if (!sc || !sc.answered && sc.para === null) return ''; return `<div class="test-results"><span><b>${sc.right}/${sc.total}</b> multiple choice</span>${sc.para !== null ? `<span><b>${Math.round(sc.para)}%</b> paragraph</span>` : ''}</div>`; })()}</div>
     ${d.summary?.length ? `<div class="lesson-box plain"><b>Takeaways</b><ul>${d.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     ${d.mnemonic ? `<div class="lesson-box ex"><b>🧠 Memory hook</b><div>${esc(d.mnemonic)}</div></div>` : ''}
-    <div class="paper-strip slim"><span class="paper-ico">📄</span><span class="small">Keep this page. Write the section title at the top and add the memory hook. Tomorrow, try redrawing your sketches from memory before you look.</span></div>
+    <div class="small muted" style="text-align:center">📄 Keep your page. Tomorrow, redraw the sketches from memory.</div>
     <div class="row lesson-done-row">${nx !== null ? `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">Next: ${esc(nb.digest.cards[nx].title)} →</button>`
       : `<a class="btn primary lg" href="#/nb/${nb.id}/recall">🧠 Last section done! Start recall →</a>`}
       <a class="btn" href="#/nb/${nb.id}/lessons">All sections</a></div>`;
@@ -1698,7 +1693,7 @@ function testStageHTML(nb, i, L) {
     <div class="test-part"><h3>Part 1 · Multiple choice</h3>${mcqHTML}</div>
     <div class="test-part"><h3>Part 2 · Paragraph</h3>
       <div class="test-q"><b>${esc(T.paragraph.prompt)}</b>
-      <div class="paper-strip slim" style="margin:8px 0"><span class="paper-ico">📝</span><span class="small">Tip: draft it on your paper first (a few bullet points), then write it out here.</span></div>
+      <div class="small muted" style="margin:2px 0 4px">📝 Jot 3 bullets on paper first, then write it here.</div>
       ${paraHTML}</div></div>`;
 }
 ACT['test-rewrite'] = async () => {
@@ -2096,7 +2091,6 @@ function recallStart(nb, el, focus) {
         <button class="btn" data-act="rc-start" data-mode="weak">Weakest concepts</button>
         ${pics ? '<button class="btn" data-act="rc-start" data-mode="pictures">🖼️ Picture questions</button>' : ''}
       </div>
-      ${courseMates > 1 ? `<p class="small" style="margin:10px 0 0">📚 Studying for a cumulative exam? <a href="#/course/${encodeURIComponent(nb.course)}">Mix all ${courseMates} ${esc(nb.course)} lectures →</a></p>` : ''}
       <label class="check small" style="margin-top:10px"><input type="checkbox" id="aiGrade" ${UI.aiGrade && S.status.claude ? 'checked' : ''} ${S.status.claude ? '' : 'disabled'}> AI grades my typed answers (otherwise I grade myself)</label>
     </div>
     <div class="grid" style="grid-template-columns:repeat(4,1fr)">

@@ -1,7 +1,7 @@
 {
-  "name": "3nc0de by Ko",
+  "name": "3nc0de",
   "short_name": "3nc0de",
-  "description": "Active-learning study tutor. Made by Ko.",
+  "description": "Active-learning study tutor.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -255,49 +255,46 @@
     videoPlan: obj({ searches: arr(obj({ query: S, concept_id: S, level: S, why: S, watch_for: SA })) }),
   };
   const TASK = {
-    lesson: `Teach ONE section of this lecture to a student who is seeing the topic for the FIRST time. You get the section
-(title, key points, analogy, related concepts) and the full lecture material. Write a short guided lesson that builds
-understanding bit by bit:
-- intro: 2–3 friendly sentences: what this section is about and why it matters (clinical or real-life when it fits).
-  Explain any jargon you use.
-- prior: 0–3 quick refreshers of background the student needs first (≤30 words each, e.g. what "ventral" means).
-  [] if nothing is needed.
-- steps: 3–6 small steps that build on each other (simple → complex) and together cover every key point of the section.
-  Each step:
-  title: ≤6 words.
-  explain: 60–120 words, plain language, short sentences. Define every new term the first time it appears and
-    **bold** the 1–3 key terms. A short bulleted list is fine when it helps.
-  example: one concrete example, analogy or "picture this" (≤45 words), different from the section analogy.
-  paper: one small thing for the student to do on paper with a pen for this step (≤28 words), starting with a verb.
-    Alternate: odd steps = a quick sketch ("Sketch …: label …, draw arrows for …"), even steps = write it in their own
-    words without looking back ("Cover the screen and write …"). Make it specific to this step's content.
-  terms: 0–3 key terms from this step with meanings of ≤15 words.
-  check: one question testing understanding of THIS step (not trivia). Alternate types so the student does both:
-    step 1 "mcq", step 2 "short", step 3 "mcq", and so on.
-    mcq: exactly 4 options with plausible distractors based on common confusions, in random order; answer = the exact
-      text of the correct option.
-    short: answerable in one or two sentences; options = []; answer = the essential points, ≤35 words.
-    explanation: why the answer is right (≤40 words); for mcq also why the most tempting wrong option is wrong
-      (name that option by its wording, never "option 1" or "B").
-- summary: 3–5 one-line takeaways. mnemonic: one vivid memory hook for the whole section.
+    lesson: `Teach ONE section of this lecture to a student seeing the topic for the FIRST time. You get the section
+(title, key points, analogy, related concepts) and the full lecture material.
+STYLE: short and skimmable. Plain words, short sentences, no filler ("In this step", "It's important to note",
+"Let's explore", "Welcome"). One idea per step. If a sentence doesn't teach something, cut it.
+- intro: 1–2 sentences, ≤35 words total: what this section is and why it matters.
+- prior: 0–2 refreshers of background they need, ≤15 words each. [] if nothing is needed.
+- steps: 3–6 small steps, simple → complex, that together cover every key point. Each step:
+  title: ≤5 words.
+  explain: Markdown. Line 1: the core idea in ONE sentence (≤20 words). Then 2–3 bullets ("- "), each ≤14 words.
+    **Bold** 1–2 key terms and define them the first time in plain words. ≤60 words in total.
+  example: one concrete example or analogy, ≤25 words, different from the section analogy.
+  paper: one small thing to do on paper, ≤18 words, starting with a verb. Alternate: odd steps = a quick sketch
+    ("Sketch …, label …"), even steps = write it in their own words ("Cover the screen and write …").
+  terms: 0–2 key terms, meanings ≤10 words. Skip terms already defined in explain.
+  check: one question testing understanding of THIS step (not trivia). Alternate types: step 1 "mcq", step 2
+    "short", step 3 "mcq", and so on. mcq: exactly 4 short options (≤12 words each) with plausible distractors;
+    answer = the exact text of the correct option. short: answerable in one sentence; options = []; answer ≤25 words.
+    explanation: ≤25 words; for mcq, name the most tempting wrong option by its wording (never "option B").
+- summary: 3–4 takeaways, ≤12 words each. mnemonic: one memory hook, ≤15 words.
 Only teach what the material supports; where it's thin, keep it simple rather than inventing details. Don't re-teach
 earlier sections or jump ahead to later ones. Don't cite slide or page numbers.`,
     section_test: `Write a short end-of-section test for a student who just learned this section for the first time.
 - mcq: 4 questions, each with exactly 4 options in random order; answer = the exact text of the correct option.
   Use plausible distractors based on common confusions. Mix: one recall, two understanding (why/how), and one
   apply question (a short clinical or real-life scenario). Don't repeat the quick-check questions listed.
-  explanation: ≤35 words on why it's right; name the most tempting wrong option by its wording (never "option B").
+  Keep each option ≤14 words. explanation: ≤25 words on why it's right; name the most tempting wrong option by its
+  wording (never "option B").
 - paragraph: prompt = one question the student answers in a paragraph (4–6 sentences) that makes them explain and
   connect the section's main ideas ("Explain how … and why …"). key_points: the 3–5 points a strong answer includes.
-  model: a model answer of ≤110 words in plain language.
+  model: a model answer of ≤80 words in plain language.
 Only test what this section taught.`,
     paragraph: `Grade a student's paragraph answer to an end-of-section question. Judge meaning, not wording; accept
 synonyms and minor misspellings. score 0–100 for how many key points are covered correctly and clearly, minus for
 wrong statements. verdict: "correct" if score ≥ 80, "partial" if 40–79, "incorrect" below 40. covered: the key points
 they got (short phrases). missing: key points they left out. misconceptions: anything they stated that is wrong
-([] if none). feedback: 2 warm, specific sentences to the student on what was strong and what to add next time.`,
-    help: `A student is partway through one step of a guided lesson and tapped for help. Reply straight to them in 40–120
-words: plain language, warm, no preamble, no "Great question". Markdown is fine (bold, short lists).
+([] if none). feedback: 1–2 short, warm, specific sentences (≤35 words) on what was strong and what to add next time. Keep
+covered/missing items to ≤10 words each.`,
+    help: `A student is partway through one step of a guided lesson and tapped for help. Reply straight to them in 30–70
+words: plain language, warm, no preamble, no "Great question", no filler. Prefer one short sentence plus 2–3 short
+bullets. Markdown is fine (bold, short lists).
 mode "simpler": re-explain the step as if to a smart 12-year-old, with a fresh everyday comparison.
 mode "example": give a different concrete example (clinical or everyday) that shows the idea in action.
 mode "question": answer their question using the lecture material; if it goes beyond the material, answer briefly

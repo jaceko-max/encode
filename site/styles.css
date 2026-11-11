@@ -894,3 +894,14 @@ html.pm-open { overflow: hidden; }
 .test-exp { padding: 8px 12px; border-radius: 10px; } .test-exp.ok { background: var(--good-soft); } .test-exp.no { background: var(--bad-soft); }
 .test-results { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .test-results span { padding: 6px 14px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+
+/* lessons: less text, more scannable */
+.lesson-outline-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.lesson-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 999px; font-size: .85rem; background: var(--surface-2); border: 1px solid var(--border); }
+.lesson-chip b { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: .72rem; color: #04121f; background: #3dd6f5; }
+.lesson-refresh { font-size: .92rem; } .lesson-refresh summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.lesson-refresh ul { margin: 6px 0 0; padding-left: 20px; }
+.lesson-text ul { margin: .5em 0 0; padding-left: 20px; } .lesson-text li { margin: 4px 0; }
+.lesson-text > p:first-child { font-size: 1.12rem; font-weight: 600; color: var(--text); }
+.paper-task { align-items: center; }
+.lesson-help-row { gap: 4px; }
