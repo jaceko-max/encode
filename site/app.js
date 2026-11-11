@@ -737,13 +737,13 @@ function startClock() {
 // ── Today's plan: the next three things worth doing, in the order that helps memory most ──
 function planSteps(nbs, single = false) {
   const steps = [];
-  const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
-  steps.push(due ? { icon: '🧠', label: `Review ${due} due card${due > 1 ? 's' : ''}`, sub: `about ${Math.max(1, Math.round(due * 20 / 60))} min · spaced review`, ...(single ? { href: `#/nb/${nbs[0].id}/recall` } : { act: 'review-all' }) }
-    : { icon: '🧠', label: 'Reviews', sub: 'All caught up ✓', done: true });
   const withKit = nbs.filter((n) => n.digest && n.digest.cards?.length);
   const learnNb = withKit.find((n) => !lessonsDone(n));
   if (learnNb) { const i = lessonNext(learnNb); steps.push({ icon: '🎓', label: `Learn: ${learnNb.digest.cards[i].title}`, sub: single ? `Section ${i + 1} of ${learnNb.digest.cards.length}` : learnNb.title, href: `#/nb/${learnNb.id}/lessons/${i}` }); }
   else steps.push({ icon: '🎓', label: 'Learn', sub: withKit.length ? 'Every section learned ✓' : 'Add a lecture to start', done: !!withKit.length, ...(withKit.length ? {} : { act: 'new-nb' }) });
+  const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
+  steps.push(due ? { icon: '🧠', label: `Review ${due} due card${due > 1 ? 's' : ''}`, sub: `about ${Math.max(1, Math.round(due * 20 / 60))} min · spaced review`, ...(single ? { href: `#/nb/${nbs[0].id}/recall` } : { act: 'review-all' }) }
+    : { icon: '🧠', label: 'Reviews', sub: 'All caught up ✓', done: true });
   let teach = null;
   for (const nb of withKit) { for (const [i, L] of Object.entries(nb.lessons || {})) if (L?.done && !L.teach && nb.digest.cards[i] && L.title === nb.digest.cards[i].title) { teach = { nb, i: +i }; break; } if (teach) break; }
   if (teach) steps.push({ icon: '🗣️', label: `Teach back: ${teach.nb.digest.cards[teach.i].title}`, sub: 'Explain it to a 12-year-old in 3 sentences', href: `#/nb/${teach.nb.id}/lessons/${teach.i}` });
@@ -761,7 +761,7 @@ function planCardHTML(nbs) {
     <ol class="plan">${steps.map((s, n) => `<li class="${s.done ? 'done' : ''} ${s.muted ? 'muted' : ''}"><span class="plan-n">${s.muted ? '–' : s.done ? '✓' : n + 1}</span><span class="plan-ico">${s.icon}</span>
       <div class="plan-txt"><b>${esc(s.label)}</b><span class="small muted">${esc(s.sub)}</span></div>
       ${s.done ? '' : `<button class="btn sm" data-act="plan-go" data-n="${n}">Go</button>`}</li>`).join('')}</ol>
-    <div class="small muted">Review first (spaced recall), then learn something new, then explain it back. That order makes it stick.</div></div></section>`;
+    <div class="small muted">Learn something new, then review what’s due (spaced recall), then explain it back.</div></div></section>`;
 }
 ACT['plan-go'] = (el) => {
   const nbs = route().view === 'nb' ? [curNb()] : [...S.notebooks].sort((a, b) => b.updated - a.updated);
@@ -793,7 +793,7 @@ function renderHome() {
       ${clockHTML()}
       <h1>${greet}${prof().name ? `, ${esc(prof().name)}` : ''} 👋</h1>
       ${prof().name ? '' : '<a class="small hero-name-link" href="#/profile">Add your name and see your rank →</a>'}
-      ${nbs.length ? '<p class="muted" style="margin:0 0 4px">Your plan for today is below. Review first, then learn something new.</p>'
+      ${nbs.length ? '<p class="muted" style="margin:0 0 4px">Your plan for today is below: learn, review, then teach it back.</p>'
         : '<p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>'}
       <p class="small muted" style="margin:-4px 0 12px;${nbs.length ? 'display:none' : ''}">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
       <div class="row">
