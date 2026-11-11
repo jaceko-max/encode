@@ -1698,12 +1698,14 @@ function lessonStageHTML(nb, i, L, s, steps) {
       body = `<div class="lesson-opts">${ch.options.map((o, k) => {
         const cls = fin ? (o === ch.answer ? 'right' : wrong.includes(k) ? 'wrong' : 'dim') : wrong.includes(k) ? 'wrong crossed' : '';
         const off = fin || wrong.includes(k);
-        return `<button class="opt ${cls}" data-act="lesson-mcq" data-o="${k}" ${off ? 'disabled' : ''}><span class="opt-l">${'ABCD'[k] || k + 1}</span><span>${esc(o)}</span></button>`;
-      }).join('')}</div>`;
+        const sel = !fin && UI.lessonPick?.[ckey] === k && !wrong.includes(k) ? 'sel' : '';
+        return `<button class="opt ${cls} ${sel}" data-act="lesson-pick" data-o="${k}" ${off ? 'disabled' : ''} aria-pressed="${!!sel}"><span class="opt-l">${'ABCD'[k] || k + 1}</span><span>${esc(o)}</span></button>`;
+      }).join('')}</div>
+      ${fin ? '' : `<div class="row"><button class="btn primary" data-act="lesson-mcq-check" ${UI.lessonPick?.[ckey] === undefined || wrong.includes(UI.lessonPick?.[ckey]) ? 'disabled' : ''}>Check answer</button><span class="small muted">${hinting ? 'Pick another option.' : 'Pick one, say how sure you are, then check.'}</span></div>`}`;
     } else if (fin) {
       body = `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(raw.text)}</div></div>`;
     } else {
-      const draft = grading ? UI.lessonDraft || '' : hinting ? raw.text || '' : '';
+      const draft = grading ? UI.lessonDraft || '' : UI.lessonTyped?.[ckey] ?? (hinting ? raw.text || '' : '');
       body = `<textarea id="lessonA" rows="3" placeholder="Answer in your own words…" ${grading ? 'disabled' : ''}>${esc(draft)}</textarea>
         <div class="row"><button class="btn primary" data-act="lesson-short" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : hinting ? 'Check again' : 'Check my answer'}</button></div>`;
     }
@@ -2205,6 +2207,23 @@ function itemConcept(nb, i, item) {
   return best?.id || ids[0];
 }
 function lessonRecord(nb, i, item, ok) { const cid = itemConcept(nb, i, item); if (cid) record(nb, cid, ok); }
+document.addEventListener('input', (e) => { // remember a half-typed answer through any redraw
+  if (e.target.id !== 'lessonA') return; const nb = curNb(); const i = +route().arg; const L = nb && lessonOf(nb, i); if (!L) return;
+  const s = lessonStages(L.data)[L.pos]; (UI.lessonTyped ||= {})[`${nb.id}:${i}:${s.j}`] = e.target.value;
+});
+ACT['lesson-pick'] = (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
+  if (s.k !== 'check' || checkFinal(L.checks[s.j]) || el.disabled) return;
+  const k = +el.dataset.o; (UI.lessonPick ||= {})[`${nb.id}:${i}:${s.j}`] = k;
+  document.querySelectorAll('#lessonStage [data-act="lesson-pick"]').forEach((b) => { const on = +b.dataset.o === k; b.classList.toggle('sel', on); b.setAttribute('aria-pressed', on); });
+  const c = $('#lessonStage [data-act="lesson-mcq-check"]'); if (c) c.disabled = false;
+};
+ACT['lesson-mcq-check'] = (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
+  const k = UI.lessonPick?.[`${nb.id}:${i}:${s.j}`]; if (k === undefined) return toast('Pick an answer first');
+  delete UI.lessonPick[`${nb.id}:${i}:${s.j}`];
+  return ACT['lesson-mcq']({ dataset: { o: k } });
+};
 ACT['lesson-mcq'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
   const prev = L.checks[s.j]; if (s.k !== 'check' || checkFinal(prev)) return;
@@ -2216,7 +2235,11 @@ ACT['lesson-mcq'] = async (el) => {
   await save(nb); lessonShow(nb, i);
   if (ok) gainXP(L.retaking ? 1 : prev ? 2 : 4, prev ? 'got it on the retry' : 'quick check');
 };
-ACT['lesson-conf'] = (el) => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; (UI.lessonConf ||= {})[`${nb.id}:${i}:${s.j}`] = el.dataset.c; lessonShow(nb, i); };
+ACT['lesson-conf'] = (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
+  (UI.lessonConf ||= {})[`${nb.id}:${i}:${s.j}`] = el.dataset.c;
+  el.closest('.conf-row')?.querySelectorAll('[data-act="lesson-conf"]').forEach((b) => b.classList.toggle('on', b === el)); // no redraw: keeps what you typed
+};
 ACT['lesson-reveal'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; const r = L.checks[s.j];
   if (s.k !== 'check' || !r?.verdict) return;
@@ -2237,6 +2260,7 @@ ACT['lesson-short'] = async () => {
   if (!r || !r.verdict) { const cv = coverage(text, ch.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare your answer with the key answer below.' }; }
   const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
   const conf = prev?.conf ?? (UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '');
+  if (UI.lessonTyped) delete UI.lessonTyped[`${nb.id}:${i}:${s.j}`];
   L.checks[s.j] = { text, ok, verdict: r.verdict, feedback: r.feedback || '', conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : ok };
   if (!prev) lessonRecord(nb, i, ch, ok);
   await save(nb);
@@ -2252,7 +2276,8 @@ document.addEventListener('keydown', (e) => {
   }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   const opt = { a: 0, b: 1, c: 2, d: 3, 1: 0, 2: 1, 3: 2, 4: 3 }[e.key.toLowerCase()];
-  if (opt !== undefined) { const b = document.querySelectorAll('#lessonStage [data-act="lesson-mcq"]')[opt]; if (b && !b.disabled) { e.preventDefault(); b.click(); } return; }
+  if (opt !== undefined) { const b = document.querySelectorAll('#lessonStage [data-act="lesson-pick"]')[opt]; if (b && !b.disabled) { e.preventDefault(); b.click(); } return; }
+  if (e.key === 'Enter') { const c = $('#lessonStage [data-act="lesson-mcq-check"]'); if (c && !c.disabled) { e.preventDefault(); c.click(); return; } }
   if (e.key === 'ArrowRight') { const n = $('.lesson-nav [data-act="lesson-next"]'); if (n) { e.preventDefault(); n.click(); } }
   if (e.key === 'ArrowLeft') { const b = $('.lesson-nav [data-act="lesson-back"]'); if (b) { e.preventDefault(); b.click(); } }
 });
