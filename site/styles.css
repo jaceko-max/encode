@@ -919,3 +919,66 @@ html.pm-open { overflow: hidden; }
 .lesson-plain span { font: 700 .72rem "Chakra Petch", var(--font); letter-spacing: .06em; text-transform: uppercase; color: #86efac; }
 .opt.crossed span:last-child { text-decoration: line-through; opacity: .7; }
 .hint-box { border: 1px dashed color-mix(in srgb, #facc15 50%, var(--border)); }
+/* focus timer modes: never wider than the card (fixed sideways scroll on phones) */
+.pm-modes { display: flex; max-width: 100%; }
+.pm-modes button { flex: 1 1 0; min-width: 0; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+.pm-home-side { min-width: min(240px, 100%); grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 520px) { .pm-home-side { flex: 1 1 100%; } }
+.teach-box { background: color-mix(in srgb, #a78bfa 10%, var(--surface-2)); border-color: color-mix(in srgb, #a78bfa 40%, var(--border)); }
+.teach-box textarea { width: 100%; }
+.guess-box { padding: 10px 12px; border-radius: 12px; border: 1px dashed color-mix(in srgb, #3dd6f5 45%, var(--border)); }
+.mix-tag { background: color-mix(in srgb, #a78bfa 18%, var(--surface-2)); color: #ddd6fe; }
+
+/* ═════════════ study stages (tabs grouped Learn → Practice → More) ═════════════ */
+.stage-row { display: flex; align-items: center; gap: 6px; padding: 8px 0 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.stage-row::-webkit-scrollbar { display: none; }
+.stage { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 999px; white-space: nowrap;
+  font: 700 .9rem "Chakra Petch", var(--font); color: var(--muted); text-decoration: none; border: 1px solid var(--border); background: var(--surface-2); }
+.stage:hover { color: var(--text); border-color: color-mix(in srgb, #4f7dff 50%, var(--border)); }
+.stage.on { color: #04121f; background: var(--grad, linear-gradient(135deg, #4f7dff, #3dd6f5)); border-color: transparent; }
+.stage-n { font-size: .72rem; opacity: .8; }
+.stage-n:empty { display: none; }
+.stage .badge { margin-left: 2px; }
+.stage .next-dot { position: absolute; top: 3px; right: 6px; }
+.stage-arrow { color: var(--muted); opacity: .5; font-size: .85rem; }
+@media (max-width: 520px) { .stage { padding: 7px 11px; font-size: .85rem; } .stage-arrow { display: none; } }
+
+/* ═════════════ today's plan ═════════════ */
+.plan-card { display: grid; gap: 12px; }
+.plan { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.plan li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.plan li.done { opacity: .6; }
+.plan li.muted { opacity: .45; }
+.plan-n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .85rem; color: #04121f; background: #3dd6f5; }
+.plan li.done .plan-n { background: var(--good); }
+.plan-ico { font-size: 1.2rem; }
+.plan-txt { flex: 1; min-width: 0; display: grid; }
+.plan-txt b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 6px; }
+.plan-chip { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: .82rem; padding: 4px 10px; border-radius: 999px; cursor: pointer; }
+.plan-chip.first { border-color: color-mix(in srgb, #3dd6f5 60%, var(--border)); background: color-mix(in srgb, #3dd6f5 12%, var(--surface-2)); }
+.plan-chip:hover { border-color: #4f7dff; }
+.plan-arrow { color: var(--muted); font-size: .8rem; }
+
+/* ═════════════ compact focus timer bar ═════════════ */
+.pm-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.pm-bar-txt { flex: 1; min-width: 0; display: grid; }
+.pm-bar .btn { flex: none; }
+@media (max-width: 420px) { .hide-sm { display: none; } .pm-bar { gap: 8px; } }
+@media (max-width: 520px) {
+  .plan-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .plan-strip::-webkit-scrollbar { display: none; }
+  .plan-chip, .plan-strip > span { flex: none; }
+  .tabs a { padding-left: 11px; padding-right: 11px; gap: 6px; }
+}
+/* phone: keep the home page short so notebooks are close to the top */
+@media (max-width: 520px) {
+  .plan-card { gap: 8px; }
+  .plan-card > .small.muted, .plan-card > .row.between .btn.primary { display: none; }
+  .plan li { padding: 8px 10px; gap: 8px; }
+  .plan li.done .plan-txt .small, .plan li.muted .plan-txt .small { display: none; }
+  .hero .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .hero .stat-grid .stat { padding: 8px 4px; text-align: center; }
+  .hero .stat-grid .stat b { font-size: .92rem; display: block; line-height: 1.2; }
+  .hero .stat-grid .stat span { font-size: .66rem; }
+}

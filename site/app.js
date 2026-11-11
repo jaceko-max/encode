@@ -734,6 +734,47 @@ function startClock() {
   };
   UI.clockT = setTimeout(() => { tick(); UI.clockI = setInterval(tick, 1000); }, 1000 - (Date.now() % 1000)); // line up with the real second
 }
+// ── Today's plan: the next three things worth doing, in the order that helps memory most ──
+function planSteps(nbs, single = false) {
+  const steps = [];
+  const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
+  steps.push(due ? { icon: '🧠', label: `Review ${due} due card${due > 1 ? 's' : ''}`, sub: `about ${Math.max(1, Math.round(due * 20 / 60))} min · spaced review`, ...(single ? { href: `#/nb/${nbs[0].id}/recall` } : { act: 'review-all' }) }
+    : { icon: '🧠', label: 'Reviews', sub: 'All caught up ✓', done: true });
+  const withKit = nbs.filter((n) => n.digest && n.digest.cards?.length);
+  const learnNb = withKit.find((n) => !lessonsDone(n));
+  if (learnNb) { const i = lessonNext(learnNb); steps.push({ icon: '🎓', label: `Learn: ${learnNb.digest.cards[i].title}`, sub: single ? `Section ${i + 1} of ${learnNb.digest.cards.length}` : learnNb.title, href: `#/nb/${learnNb.id}/lessons/${i}` }); }
+  else steps.push({ icon: '🎓', label: 'Learn', sub: withKit.length ? 'Every section learned ✓' : 'Add a lecture to start', done: !!withKit.length, ...(withKit.length ? {} : { act: 'new-nb' }) });
+  let teach = null;
+  for (const nb of withKit) { for (const [i, L] of Object.entries(nb.lessons || {})) if (L?.done && !L.teach && nb.digest.cards[i] && L.title === nb.digest.cards[i].title) { teach = { nb, i: +i }; break; } if (teach) break; }
+  if (teach) steps.push({ icon: '🗣️', label: `Teach back: ${teach.nb.digest.cards[teach.i].title}`, sub: 'Explain it to a 12-year-old in 3 sentences', href: `#/nb/${teach.nb.id}/lessons/${teach.i}` });
+  else {
+    const examNb = withKit.find((n) => (n.lessons && Object.values(n.lessons).some((L) => L?.done)) && !(n.exams || []).some((x) => Date.now() - (x.at || x.date || 0) < 3 * 86400e3));
+    steps.push(examNb ? { icon: '📝', label: `Practice exam: ${examNb.title}`, sub: 'Mixed questions across the whole lecture', href: `#/nb/${examNb.id}/exam` }
+      : { icon: '🗣️', label: 'Teach back', sub: withKit.length ? 'Finish a section first' : 'Comes after learning', done: true, muted: true });
+  }
+  return steps;
+}
+function planCardHTML(nbs) {
+  const steps = planSteps(nbs); const first = steps.findIndex((s) => !s.done);
+  return `<section class="section"><div class="card plan-card">
+    <div class="row between"><h2 style="margin:0">📋 Today’s plan</h2>${first >= 0 ? `<button class="btn primary" data-act="plan-go" data-n="${first}">Start: ${esc(steps[first].label.split(':')[0])} →</button>` : '<span class="tag good">All done for today ✓</span>'}</div>
+    <ol class="plan">${steps.map((s, n) => `<li class="${s.done ? 'done' : ''} ${s.muted ? 'muted' : ''}"><span class="plan-n">${s.muted ? '–' : s.done ? '✓' : n + 1}</span><span class="plan-ico">${s.icon}</span>
+      <div class="plan-txt"><b>${esc(s.label)}</b><span class="small muted">${esc(s.sub)}</span></div>
+      ${s.done ? '' : `<button class="btn sm" data-act="plan-go" data-n="${n}">Go</button>`}</li>`).join('')}</ol>
+    <div class="small muted">Review first (spaced recall), then learn something new, then explain it back. That order makes it stick.</div></div></section>`;
+}
+ACT['plan-go'] = (el) => {
+  const nbs = route().view === 'nb' ? [curNb()] : [...S.notebooks].sort((a, b) => b.updated - a.updated);
+  const s = planSteps(nbs, route().view === 'nb')[+el.dataset.n]; if (!s) return;
+  if (s.act) return ACT[s.act]?.(el); if (s.href) go(s.href);
+};
+function nbPlanStrip(nb) {
+  if (!nb.digest) return '';
+  const steps = planSteps([nb], true).map((s, n) => ({ ...s, n })).filter((s) => !s.done);
+  if (!steps.length) return '<div class="plan-strip"><span class="small muted">Today:</span> <span class="small">All done for this lecture ✓</span></div>';
+  return `<div class="plan-strip"><span class="small muted">Today:</span>${steps.map((s, k) => `${k ? '<span class="plan-arrow">→</span>' : ''}<button class="plan-chip ${k ? '' : 'first'}" data-act="plan-go" data-n="${s.n}">${s.icon} ${esc(s.label.length > 34 ? s.label.slice(0, 32) + '…' : s.label)}</button>`).join('')}</div>`;
+}
+
 function renderHome() {
   startClock(); setTimeout(homeLbCard, 0);
   const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
@@ -752,12 +793,11 @@ function renderHome() {
       ${clockHTML()}
       <h1>${greet}${prof().name ? `, ${esc(prof().name)}` : ''} 👋</h1>
       ${prof().name ? '' : '<a class="small hero-name-link" href="#/profile">Add your name and see your rank →</a>'}
-      ${nbs.length ? `<p class="muted">${due ? `<b>${due} card${due > 1 ? 's' : ''} due</b> · about ${Math.max(1, Math.round(due * 20 / 60))} min. Clearing them today is what makes it stick.` : 'All caught up ✓ Add your next lecture, or take a practice exam to test yourself.'}</p>`
+      ${nbs.length ? '<p class="muted" style="margin:0 0 4px">Your plan for today is below. Review first, then learn something new.</p>'
         : '<p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>'}
       <p class="small muted" style="margin:-4px 0 12px;${nbs.length ? 'display:none' : ''}">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
       <div class="row">
-        ${due ? `<button class="btn primary lg" data-act="review-all">Review ${due} due card${due > 1 ? 's' : ''}</button>` : ''}
-        <button class="btn ${due ? '' : 'primary lg'}" data-act="new-nb">＋ New notebook</button>
+        <button class="btn ${nbs.length ? '' : 'primary lg'}" data-act="new-nb">＋ New notebook</button>
         ${nbs.some((n) => n.sample) ? '' : '<button class="btn ghost" data-act="sample">Try a sample lecture</button>'}
       </div>
     </div>
@@ -778,7 +818,7 @@ function renderHome() {
       <div class="week" aria-label="This week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''} ${d.future ? 'future' : ''}" title="${d.full}${d.future ? '' : `: ${S.meta.days[d.k] || 0} XP`}"><i></i>${d.l}</div>`).join('')}</div>
     </div>
   </section>
-  ${nbs.length ? `<section class="section" id="pomoHome">${pomoHomeHTML()}</section>` : ''}
+  ${nbs.length ? planCardHTML(nbs) : ''}
 
 
   <section class="section">
@@ -787,7 +827,7 @@ function renderHome() {
       <div class="card empty"><div class="big">📚</div><h3>No notebooks yet</h3>
       <p class="muted" style="margin:0">One notebook per lecture or topic. Tap <b>＋ New notebook</b> above to start, or try the sample first.</p></div>`}
   </section>
-  ${nbs.length ? '' : `<section class="section" id="pomoHome">${pomoHomeHTML()}</section>`}
+  <section class="section" id="pomoHome">${UI.pmOpen ? pomoHomeHTML() : pomoBarHTML()}</section>
   ${S.status.public ? '<section class="section" id="homeLb"></section>' : ''}
   ${nbs.some((n) => n.digest) ? donateCard() : ''}
 
@@ -884,6 +924,13 @@ function pathSteps(nb) {
 }
 function nextStep(nb) { return pathSteps(nb).find((s) => !s.done) || { tab: dueCards(nb).length ? 'recall' : 'exam', label: dueCards(nb).length ? 'Review due cards' : 'Another practice exam' }; }
 
+// Tabs grouped into the order you study in: learn it → practice it → everything else
+const STAGES = [
+  { k: 'learn', label: 'Learn', ico: '🎓', tabs: ['pretest', 'lessons', 'learn', 'videos'], home: 'lessons' },
+  { k: 'practice', label: 'Practice', ico: '🧠', tabs: ['recall', 'teach', 'exam'], home: 'recall' },
+  { k: 'more', label: 'More', ico: '⋯', tabs: ['sources', 'tutor', 'progress'], home: 'sources' },
+];
+const stageOf = (tab) => STAGES.find((s) => s.tabs.includes(tab)) || STAGES[2];
 const KIT_TABS = ['pretest', 'lessons', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
 function renderNotebook(nb, tab, arg) {
   if (tab === 'learn' && nb.digest && !nb.progress.learn) { nb.progress.learn = true; save(nb); }
@@ -895,7 +942,11 @@ function renderNotebook(nb, tab, arg) {
       <div class="small muted">${esc(nb.course || '')}${nb.course ? ' · ' : ''}${pct(nbMastery(nb))}% mastery</div></div>
       <button class="icon-btn quiet" data-act="del-nb" data-id="${nb.id}" title="Delete notebook" aria-label="Delete notebook">${icon('trash')}</button>
     </div>
-    <div class="tabs-bar"><nav class="tabs">${TABS.map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
+    ${nbPlanStrip(nb)}
+    <div class="tabs-bar">
+      <div class="stage-row" role="tablist" aria-label="Study stage">${STAGES.map((sg, n) => { const on = stageOf(tab).k === sg.k; const target = sg.k === 'learn' && !sg.tabs.includes(next.tab) ? 'lessons' : sg.tabs.includes(next.tab) ? next.tab : sg.home;
+        return `<a href="#/nb/${nb.id}/${on ? tab : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${sg.ico} ${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
+      <nav class="tabs">${TABS.filter(([k]) => stageOf(tab).tabs.includes(k)).sort((x, y) => stageOf(tab).tabs.indexOf(x[0]) - stageOf(tab).tabs.indexOf(y[0])).map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
     <div id="tab"></div>`;
   const tabsEl = $('.tabs');
   if (tabsEl) {
@@ -1323,7 +1374,8 @@ ACT['submit-pretest'] = async () => {
   const nb = curNb();
   nb.pretest.answers = $$('[data-pre]').map((t) => t.value.trim());
   nb.pretest.done = true; await save(nb);
-  await gainXP(5 * nb.pretest.answers.filter(Boolean).length + 5, 'pretest');
+  const tried = nb.pretest.answers.filter((x) => x && wordCount(x) >= 2).length;
+  if (tried) await gainXP(4 * tried, 'pretest guesses'); else toast('No XP for a blank pretest. A wrong guess still helps you learn, so try one next time!');
   render();
 };
 ACT['skip-pretest'] = async () => { const nb = curNb(); nb.pretest.done = true; await save(nb); go(`#/nb/${nb.id}/lessons`); };
@@ -1353,6 +1405,7 @@ function lessonInfo(nb, i) {
   if (!L?.data) return { state: 'new', pct: 0, label: 'Not started' };
   const st = lessonStages(L.data); const checks = Object.values(L.checks || {});
   const right = checks.filter((x) => (x.first ?? x.ok) >= 1).length; const total = st.filter((s) => s.k === 'check').length;
+  if (L.retaking) { const sc0 = st[L.pos || 0]?.k; return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: sc0 === 'test' ? 'Retake · test waiting' : `Retake · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` }; }
   if (L.done) return { state: 'done', pct: 100, label: total && checks.length ? `Done ✓ · ${right}/${total} quick checks right` : 'Done ✓' };
   if (st[L.pos || 0]?.k === 'test') return { state: 'going', pct: 90, label: 'Section test waiting' };
   return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: `In progress · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` };
@@ -1401,7 +1454,7 @@ function renderLessons(nb, el, arg) {
       <div class="paper-strip slim"><span class="paper-ico">📝</span><span><b>Have paper and a pen ready.</b> <span class="small muted">You’ll sketch and jot as you go.</span></span></div>
       <div class="lesson-sum"><div class="meter"><i style="width:${pct(done / Math.max(1, cards.length))}%"></i></div><span class="small muted">${done} of ${cards.length} sections done</span></div>
       <div class="row">${done === cards.length
-        ? `<a class="btn primary" href="#/nb/${nb.id}/recall">🧠 All done! Start recall →</a><button class="btn" data-act="lesson-open" data-i="0">Go through it again</button>`
+        ? `<a class="btn primary" href="#/nb/${nb.id}/recall">🧠 All done! Start recall →</a><button class="btn" data-act="lesson-retake" data-i="0">↻ Retake from section 1</button>`
         : `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">${started ? 'Continue' : 'Start'}: ${esc(cards[nx].title)} →</button>`}</div>
       <div class="small muted">Already know it? <a href="#/nb/${nb.id}/learn">Revise →</a></div>
     </div>
@@ -1617,12 +1670,16 @@ function lessonStageHTML(nb, i, L, s, steps) {
       ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
       <div class="paper-task"><span class="paper-ico">✍️</span><div>${esc(paperPrompt(x, s.j))}</div></div>
       ${x.terms?.length ? `<dl class="lesson-terms">${x.terms.map((t) => `<div><dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd></div>`).join('')}</dl>` : ''}
-      ${help.map((h) => `<div class="lesson-box help"><b>${lab[h.mode] || '💬'}${h.q ? `: “${esc(h.q)}”` : ''}</b><div>${md(h.a)}</div></div>`).join('')}
+      ${help.map((h) => `<div class="lesson-box help"><b>${lab[h.mode] || '💬'}${h.q ? `: “${esc(h.q)}”` : ''}</b>${h.guess ? `<div class="small muted">Your guess: “${esc(h.guess)}”</div>` : ''}<div>${md(h.a)}</div></div>`).join('')}
       ${busy ? '<div class="lesson-box help"><span class="spinner"></span> Thinking…</div>' : ''}
       <div class="lesson-help-row">
-        <button class="btn sm ghost" data-act="lesson-help" data-mode="simpler" ${busy ? 'disabled' : ''}>🧒 Simpler</button>
-        <button class="btn sm ghost" data-act="lesson-help" data-mode="example" ${busy ? 'disabled' : ''}>💡 Example</button>
+        <button class="btn sm ghost" data-act="lesson-guess" data-mode="simpler" ${busy ? 'disabled' : ''}>🧒 Simpler</button>
+        <button class="btn sm ghost" data-act="lesson-guess" data-mode="example" ${busy ? 'disabled' : ''}>💡 Example</button>
         <button class="btn sm ghost" data-act="lesson-ask" ${busy ? 'disabled' : ''}>❓ Ask</button></div>
+      ${UI.lessonGuess?.key === `${nb.id}:${i}:${s.j}` ? `<div class="lesson-ask guess-box"><b>🤔 Quick guess first</b>
+        <div class="small muted">In your own words, what do you think this step is saying? A rough guess is fine. Guessing first makes the explanation stick.</div>
+        <textarea id="lessonGuessIn" rows="2" placeholder="I think it means…"></textarea>
+        <div class="row"><button class="btn primary sm" data-act="lesson-help" data-mode="${UI.lessonGuess.mode}">${UI.lessonGuess.mode === 'example' ? 'Show an example' : 'Explain it simpler'}</button><button class="btn ghost sm" data-act="lesson-help" data-mode="${UI.lessonGuess.mode}" data-skip="1">Skip guess</button></div></div>` : ''}
       ${UI.lessonAsk === `${nb.id}:${i}:${s.j}` ? `<div class="lesson-ask"><textarea id="lessonQ" rows="2" placeholder="What’s confusing?"></textarea>
         <div class="row"><button class="btn primary sm" data-act="lesson-help" data-mode="question">Ask</button><button class="btn ghost sm" data-act="lesson-ask-cancel">Cancel</button></div></div>` : ''}`;
   }
@@ -1686,13 +1743,18 @@ function lessonStageHTML(nb, i, L, s, steps) {
   const inf = lessonInfo(nb, i); const n = nb.digest.cards.length; const nx = i + 1 < n ? i + 1 : null;
   return `<div class="lesson-done"><div class="pm-big-ico">✓</div><h2>Section complete</h2>
     <p class="pm-xp">${esc(inf.label.replace(/^Done ✓ ·? ?/, '')) || 'Nice work'}</p>
+    ${(() => { const cs = Object.values(L.checks || {}).filter((c) => c.conf === 'sure'); if (!cs.length) return ''; const ok = cs.filter((c) => (c.first ?? c.ok) >= 1).length;
+      return `<div class="small" style="text-align:center">🎯 When you felt sure, you were right ${ok} of ${cs.length}${ok < cs.length ? '. The sure-but-wrong ones come back in Recall today.' : '. Nicely calibrated!'}</div>`; })()}
     ${(() => { const sc = testScore(L); if (!sc || !sc.answered && sc.para === null) return ''; return `<div class="test-results"><span><b>${sc.right}/${sc.total}</b> multiple choice</span>${sc.para !== null ? `<span><b>${Math.round(sc.para)}%</b> paragraph</span>` : ''}</div>`; })()}</div>
     ${d.summary?.length ? `<div class="lesson-box plain"><b>Takeaways</b><ul>${d.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     ${d.mnemonic ? `<div class="lesson-box ex"><b>🧠 Memory hook</b><div>${esc(d.mnemonic)}</div></div>` : ''}
+    ${teachBackHTML(nb, i, L)}
     <div class="small muted" style="text-align:center">📄 Keep your page. Tomorrow, redraw the sketches from memory.</div>
     <div class="row lesson-done-row">${nx !== null ? `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">Next: ${esc(nb.digest.cards[nx].title)} →</button>`
       : `<a class="btn primary lg" href="#/nb/${nb.id}/recall">🧠 Last section done! Start recall →</a>`}
-      <a class="btn" href="#/nb/${nb.id}/lessons">All sections</a></div>`;
+      <a class="btn" href="#/nb/${nb.id}/lessons">All sections</a>
+      <button class="btn ghost" data-act="lesson-retake" data-i="${i}">↻ Retake this section</button></div>
+    <div class="small muted" style="text-align:center">A retake runs the lesson again with a brand-new test, so you’re recalling, not remembering the same questions.</div>`;
 }
 
 // ── end-of-section test: 4 multiple-choice questions + one paragraph, written by the AI the first time you reach it ──
@@ -1708,6 +1770,16 @@ function localTest(nb, i, L) {
   const mcq = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.type === 'mcq').map(shuffleOpts).filter(Boolean).slice(0, 4);
   return { fallback: true, mcq, paragraph: { prompt: `In a paragraph, explain ${c.title.toLowerCase()} in your own words. Connect the ideas and say why they matter.`, key_points: c.points, model: '' } };
 }
+function seenQuestions(nb, skip) {
+  const out = [];
+  for (const [k, L] of Object.entries(nb.lessons || {})) {
+    if (!L?.data) continue;
+    if (+k !== skip) for (const s of L.data.steps || []) if (s.check?.question) out.push({ q: s.check.question, a: s.check.answer });
+    if (+k !== skip) for (const q of L.test?.mcq || []) out.push({ q: q.question, a: q.answer });
+    for (const q of L.pastTests || []) if (+k === skip) out.push(q);
+  }
+  return out;
+}
 async function buildTest(nb, i) {
   const L = lessonOf(nb, i); const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
   (UI.testBusy ||= {})[key] = true;
@@ -1717,14 +1789,21 @@ async function buildTest(nb, i) {
       const r = await ai('section_test', { sources: aiSources(nb), title: c.title, points: c.points,
         steps: (L.data.steps || []).map((s) => `${s.title}: ${String(s.explain || '').slice(0, 220)}`),
         used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean),
+        seen: seenQuestions(nb, i).slice(-40).map((x) => x.q.slice(0, 160)),
         concepts: nb.digest.concepts.map((x) => ({ id: x.id, name: x.name })),
         earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 2).map((x) => ({ title: x.title, points: x.points })) });
-      const used = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer }));
+      const used = [...(L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer })), ...seenQuestions(nb, i)];
       const all = (r.mcq || []).map(shuffleOpts).filter(Boolean);
       // a test question repeats a quick check if the wording is close, or the answer is the same and the topic similar
       const same = (q, u) => { const qq = Math.max(coverage(q.question, u.q), coverage(u.q, q.question)); const aa = Math.min(coverage(q.answer, u.a), coverage(u.a, q.answer)); return qq >= 0.5 || (aa >= 0.6 && qq >= 0.3); };
+      // same meaning in different words: ask the AI which candidates repeat something already asked
+      let aiRepeat = new Set();
+      try {
+        const d = await ai('dedupe', { asked: used.map((u) => u.q).slice(-40), candidates: all.map((q) => q.question) });
+        aiRepeat = new Set((d.repeats || []).map((n) => n - 1));
+      } catch { /* word-overlap check below still runs */ }
       const picked = [];
-      for (const q of all) if (!used.some((u) => same(q, u)) && !picked.some((p) => same(q, { q: p.question, a: p.answer }))) picked.push(q);
+      all.forEach((q, n) => { if (!aiRepeat.has(n) && !used.some((u) => same(q, u)) && !picked.some((p) => same(q, { q: p.question, a: p.answer }))) picked.push(q); });
       const review = picked.filter((q) => q.review).slice(0, 1);
       let mcq = [...picked.filter((q) => !q.review).slice(0, review.length ? 3 : 4), ...review];
       if (mcq.length < 3) mcq = [...mcq, ...all.filter((q) => !mcq.includes(q))].slice(0, 4); // never fewer than 3–4 questions
@@ -1817,6 +1896,44 @@ ACT['test-para'] = async () => {
   const xp = Math.round(r.score / 10); if (xp) gainXP(xp, 'paragraph');
 };
 
+// ── Teach it back: explaining in your own words (the Feynman technique) is one of the strongest ways to lock it in ──
+function teachBackHTML(nb, i, L) {
+  const c = nb.digest.cards[i]; const T = L.teach; const busy = UI.teachBackBusy === `${nb.id}:${i}`;
+  if (T?.result) {
+    const r = T.result;
+    return `<div class="lesson-box teach-box"><b>🗣️ Teach it back · ${Math.round(r.score)}%</b>
+      <div class="small muted">You wrote: “${esc(T.text)}”</div>
+      ${r.nailed?.length ? `<div class="small"><b>Nailed:</b> ${r.nailed.map(esc).join(' · ')}</div>` : ''}
+      ${r.gaps?.length ? `<div class="small"><b>Add next time:</b> ${r.gaps.map(esc).join(' · ')}</div>` : ''}
+      ${r.misconceptions?.length ? `<div class="small"><b>Careful:</b> ${r.misconceptions.map(esc).join(' · ')}</div>` : ''}
+      ${r.better_analogy ? `<div class="small">🔗 ${esc(r.better_analogy)}</div>` : ''}
+      <div class="row"><button class="btn sm ghost" data-act="lesson-teach-again">Try explaining again</button></div></div>`;
+  }
+  return `<div class="lesson-box teach-box"><b>🗣️ Last step: teach it back</b>
+    <div class="small">Explain <b>${esc(c.title)}</b> to a 12-year-old in about 3 sentences, without looking. Explaining it is one of the best ways to make it stick.</div>
+    <textarea id="teachBackIn" rows="4" placeholder="So basically…" ${busy ? 'disabled' : ''}>${esc(UI.teachBackDraft || '')}</textarea>
+    <div class="row"><button class="btn primary sm" data-act="lesson-teach" ${busy ? 'disabled' : ''}>${busy ? '<span class="spinner"></span> Reading…' : 'Check my explanation'}</button><span class="small muted">Up to +30 XP</span></div></div>`;
+}
+document.addEventListener('input', (e) => { if (e.target.id === 'teachBackIn') UI.teachBackDraft = e.target.value; });
+ACT['lesson-teach'] = async () => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const c = nb.digest.cards[i];
+  const text = ($('#teachBackIn')?.value || '').trim();
+  if (wordCount(text) < 12) { toast('Write a bit more: about 3 sentences.'); $('#teachBackIn')?.focus(); return; }
+  if (!S.status.claude) { toast('Checking explanations needs the AI tutor. See Settings.', 'err'); return openSettings(); }
+  UI.teachBackBusy = `${nb.id}:${i}`; UI.teachBackDraft = text; lessonShow(nb, i);
+  try {
+    const r = await ai('feynman', { sources: aiSources(nb), concept: c.title, prompt: `Explain "${c.title}" to a 12-year-old in about 3 sentences. Key points: ${c.points.join('; ')}`, explanation: text, history: [] });
+    L.teach = { text, result: r, at: Date.now() };
+    (c.concept_ids || []).forEach((cid) => record(nb, cid, Math.min(1, (r.score || 0) / 100)));
+    const xp = 5 + Math.round((r.score || 0) / 4); const gain = Math.max(0, xp - (L.teachXp || 0)); L.teachXp = Math.max(L.teachXp || 0, xp);
+    UI.teachBackDraft = ''; await save(nb);
+    if (gain) await gainXP(gain, 'teach-back');
+  } catch (e) { aiError(e); }
+  UI.teachBackBusy = null;
+  if (route().tab === 'lessons' && +route().arg === i) { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); }
+};
+ACT['lesson-teach-again'] = async () => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); UI.teachBackDraft = ''; delete L.teach; await save(nb); const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); };
+
 // Moving between steps re-draws only the lesson and keeps it in view.
 function lessonShow(nb, i) {
   const el = $('#tab'); if (!el) return;
@@ -1829,11 +1946,11 @@ async function lessonMove(delta) {
   const st = lessonStages(L.data);
   L.pos = Math.max(0, Math.min(st.length - 1, (L.pos || 0) + delta));
   UI.lessonDir = delta > 0 ? 'in' : 'back'; UI.lessonAsk = null;
-  if (st[L.pos].k === 'done' && !L.done) {
+  if (st[L.pos].k === 'done' && (!L.done || L.retaking)) {
     const sc = testScore(L);
     if (!sc || sc.answered < sc.total || sc.para === null) { L.pos = st.findIndex((x) => x.k === 'test'); toast('Finish the section test to complete this section.'); save(nb); lessonShow(nb, i); return; }
-    L.done = true; nb.progress.learn = true;
-    save(nb); lessonShow(nb, i); confetti(); await gainXP(15, 'section learned');
+    const retake = !!L.retaking; L.done = true; L.retaking = false; if (retake) L.retakes = (L.retakes || 0) + 1; nb.progress.learn = true;
+    save(nb); lessonShow(nb, i); confetti(); await gainXP(retake ? 5 : 15, retake ? 'section retaken' : 'section learned');
     const added = await lessonToRecall(nb, i, L); await save(nb);
     if (added) setTimeout(() => toast(`🧠 ${added} question${added > 1 ? 's' : ''} added to Recall, so they come back for spaced review`), 1200);
     return;
@@ -1869,6 +1986,20 @@ async function lessonToRecall(nb, i, L) {
   for (const it of chosen) nb.cards.push({ id: uid(), question: it.q, answer: it.a, concept_id: itemConcept(nb, i, it.item), kind: 'explain', from: 'lesson', srs: { ...newSrs(), due: it.due }, history: [] });
   return chosen.length;
 }
+ACT['lesson-retake'] = async (el) => {
+  const nb = curNb(); const i = +el.dataset.i; const L = lessonOf(nb, i);
+  if (!L?.data) return ACT['lesson-open'](el);
+  // remember the old test so the new one avoids it; reset the lesson to the start
+  const old = (L.test?.mcq || []).map((q) => ({ q: q.question, a: q.answer }));
+  L.pastTests = [...(L.pastTests || []), ...old].slice(-40);
+  if (L.test?.paragraph?.prompt) L.pastTests.push({ q: L.test.paragraph.prompt, a: '' });
+  L.test = null; L.checks = {}; L.pos = 0; L.retaking = true;
+  delete UI.cardRecall[`${nb.id}:${i}`]; UI.paperRecall = null;
+  Object.keys(UI.lessonConf || {}).filter((k) => k.startsWith(`${nb.id}:${i}:`)).forEach((k) => delete UI.lessonConf[k]);
+  await save(nb);
+  if (route().tab === 'lessons' && route().arg !== '' && +route().arg === i) { UI.lessonDir = 'in'; lessonShow(nb, i); toast('Retake started: same lesson, brand-new test'); }
+  else { ACT['lesson-open'](el); setTimeout(() => toast('Retake started: same lesson, brand-new test'), 700); }
+};
 ACT['lesson-next'] = () => lessonMove(1);
 ACT['lesson-back'] = () => {
   const nb = curNb(); const L = lessonOf(nb, +route().arg); if (!L) return;
@@ -1876,18 +2007,22 @@ ACT['lesson-back'] = () => {
   // from a check's "Review the step", go back to that step itself
   lessonMove(s?.k === 'check' ? -1 : -1);
 };
+ACT['lesson-guess'] = (el) => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; UI.lessonAsk = null; UI.lessonGuess = { key: `${nb.id}:${i}:${s.j}`, mode: el.dataset.mode }; lessonShow(nb, i); setTimeout(() => $('#lessonGuessIn')?.focus(), 30); };
 ACT['lesson-ask'] = () => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; UI.lessonAsk = `${nb.id}:${i}:${s.j}`; lessonShow(nb, i); setTimeout(() => $('#lessonQ')?.focus(), 30); };
 ACT['lesson-ask-cancel'] = () => { UI.lessonAsk = null; lessonShow(curNb(), +route().arg); };
 ACT['lesson-help'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; if (s.k !== 'step') return;
   const mode = el.dataset.mode; const q = mode === 'question' ? ($('#lessonQ')?.value || '').trim() : '';
+  const guess = mode !== 'question' && !el.dataset.skip ? ($('#lessonGuessIn')?.value || '').trim() : '';
+  UI.lessonGuess = null;
   if (mode === 'question' && !q) { toast('Type your question first'); $('#lessonQ')?.focus(); return; }
   if (!S.status.claude) { toast('The help buttons need the AI tutor. See Settings.', 'err'); return openSettings(); }
   const x = L.data.steps[s.j]; const tag = `${nb.id}:${i}:${s.j}`;
   UI.lessonHelpBusy = tag; UI.lessonAsk = null; lessonShow(nb, i);
   try {
-    const r = await ai('lesson_help', { sources: aiSources(nb), title: nb.digest.cards[i].title, step_title: x.title, explain: x.explain, example: x.example, mode, question: q, earlier: (L.help[s.j] || []).slice(-3) });
-    (L.help[s.j] ||= []).push({ mode, q, a: r.answer }); await save(nb);
+    const r = await ai('lesson_help', { sources: aiSources(nb), title: nb.digest.cards[i].title, step_title: x.title, explain: x.explain, example: x.example, mode, question: q, guess, earlier: (L.help[s.j] || []).slice(-3) });
+    const ans = String(r.answer || '').replace(/([.:!?])\s+[*•-]\s+/g, '$1\n- '); // bullets that came out on one line
+    (L.help[s.j] ||= []).push({ mode, q, guess, a: ans }); await save(nb);
   } catch (e) { aiError(e); }
   UI.lessonHelpBusy = null;
   if (route().tab === 'lessons' && +route().arg === i) {
@@ -1914,7 +2049,7 @@ ACT['lesson-mcq'] = async (el) => {
   L.checks[s.j] = { pick: k, wrong: ok ? prev?.wrong || [] : [...(prev?.wrong || []), k], ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: '', conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : (ok ? 1 : 0) };
   if (!prev) lessonRecord(nb, i, ch, ok ? 1 : 0);
   await save(nb); lessonShow(nb, i);
-  if (ok) gainXP(prev ? 2 : 4, prev ? 'got it on the retry' : 'quick check');
+  if (ok) gainXP(L.retaking ? 1 : prev ? 2 : 4, prev ? 'got it on the retry' : 'quick check');
 };
 ACT['lesson-conf'] = (el) => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; (UI.lessonConf ||= {})[`${nb.id}:${i}:${s.j}`] = el.dataset.c; lessonShow(nb, i); };
 ACT['lesson-reveal'] = async () => {
@@ -1941,7 +2076,7 @@ ACT['lesson-short'] = async () => {
   if (!prev) lessonRecord(nb, i, ch, ok);
   await save(nb);
   if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i);
-  if (ok) gainXP(prev ? 2 : ok >= 1 ? 5 : 2, prev ? 'got it on the retry' : 'quick check');
+  if (ok) gainXP(L.retaking ? 1 : prev ? 2 : ok >= 1 ? 5 : 2, prev ? 'got it on the retry' : 'quick check');
 };
 document.addEventListener('keydown', (e) => {
   if (route().tab !== 'lessons' || !$('#lessonStage') || !$('#modal').classList.contains('hidden') || document.getElementById('pomoScreen')) return;
@@ -1959,7 +2094,7 @@ document.addEventListener('keydown', (e) => {
 
 function renderLearn(nb, el) {
   const d = nb.digest;
-  const mode = UI.cardMode || 'study';
+  const mode = UI.cardMode || 'recall'; // recalling first beats rereading; "Study" is one tap away
   UI.cardRecall ||= {};
   UI.shots = {};
   loadVisuals(nb).then((changed) => { if (changed && route().tab === 'learn') render(); });
@@ -1969,7 +2104,7 @@ function renderLearn(nb, el) {
     <div class="card overview"><h2>${esc(d.title)}</h2><p style="margin:0">${esc(d.overview)}</p></div>
     ${noPics.length ? `<div class="card flat tight row" style="background:var(--warn-soft);border-color:transparent">🖼️ <span class="spacer small">This notebook was made before Etch kept slide pictures. Drop <b>${noPics.map((s) => esc(s.name)).join(', ')}</b> on the Sources tab again to add them. Your study kit and progress stay the same.</span><a class="btn sm" href="#/nb/${nb.id}/sources">Go to Sources</a></div>` : ''}
 
-    <div class="row between section"><div><h2>🃏 Visual summary cards</h2><div class="small muted">Study a card, then flip to recall mode and write what you remember.</div></div>
+    <div class="row between section"><div><h2>🃏 Visual summary cards</h2><div class="small muted">Write what you remember first, then reveal it. Tap Study to just read.</div></div>
       <div class="seg"><button class="${mode === 'study' ? 'on' : ''}" data-act="card-mode" data-m="study">Study</button><button class="${mode === 'recall' ? 'on' : ''}" data-act="card-mode" data-m="recall">Cover & recall</button></div></div>
     <div class="grid">${d.cards.map((c, i) => summaryCard(nb, c, i, mode)).join('')}</div>
 
@@ -2036,7 +2171,7 @@ ACT['card-draw'] = async (el) => {
   try {
     const r = await api('/api/illustrate', { name: c.title, definition: c.points.join('; '), visual_hint: `A labeled teaching diagram of: ${c.title}. Show ${c.points.join('; ')}`, mnemonic: c.analogy, style: 'diagram', engine: 'svg', sources: aiSources(nb) });
     if (r.kind === 'svg' && !r.svg) throw new Error('The drawing came back empty. Try again.');
-    nb.illustrations[key] = r; await save(nb); await gainXP(3, 'visual');
+    nb.illustrations[key] = r; await save(nb);
   } catch (e) { aiError(e); }
   delete UI.illBusy[key]; render();
 };
@@ -2088,7 +2223,6 @@ ACT.illustrate = async (el) => {
     if (r.kind === 'svg' && !r.svg) throw new Error('The drawing came back empty. Try again.');
     nb.illustrations[key] = r; await save(nb);
     if (r.note) toast(r.note);
-    await gainXP(3, 'visual');
   } catch (e) { aiError(e); }
   delete UI.illBusy[key]; render();
 };
@@ -2189,7 +2323,7 @@ function recallSession(el) {
   el.innerHTML = `<div class="q-card">
     <div class="progress-line"><i style="width:${pct(R.i / R.queue.length)}%"></i></div>
     <div class="card">
-      <div class="row between"><span class="row" style="gap:6px"><span class="tag accent">${card.kind === 'picture' ? '🖼️ Picture' : esc(CARD_KIND[card.kind] || card.kind)}</span>${R.scope.startsWith('course:') ? `<span class="tag">${esc(nb.title)}</span>` : ''}</span>
+      <div class="row between"><span class="row" style="gap:6px"><span class="tag accent">${card.kind === 'picture' ? '🖼️ Picture' : esc(CARD_KIND[card.kind] || card.kind)}</span>${R.scope.startsWith('course:') ? `<span class="tag">${esc(nb.title)}</span>` : R.scope.startsWith('nb:') && R.scope.slice(3) !== nb.id ? `<span class="tag mix-tag" title="Mixed in from another notebook">🔀 ${esc(nb.title)}</span>` : ''}</span>
         <span class="small muted">${R.i + 1} / ${R.queue.length}${Object.values(R.requeued || {}).reduce((x, y) => x + y, 0) ? ` (incl. ${Object.values(R.requeued).reduce((x, y) => x + y, 0)} coming back)` : ''} · ${esc(conceptName(nb, card.concept_id))}</span></div>
       ${pic.length ? `<div style="margin-top:10px">${shotStrip('rc', pic)}</div>` : card.image ? '<div class="shot-empty" style="margin-top:10px"><span class="spinner"></span> Loading picture…</div>' : ''}
       <div class="q-text">${tx(card.question)}</div>
@@ -2278,7 +2412,14 @@ function beginSession(scope, focus, items, limit) {
   return true;
 }
 function startRecall(nb, mode, focus, routeFocus) {
-  return beginSession('nb:' + nb.id, routeFocus, poolFor(nb, mode, focus).map((card) => ({ nb, card })), mode === 'cram' ? 40 : 20);
+  const items = poolFor(nb, mode, focus).map((card) => ({ nb, card }));
+  // Interleaving: mix up to 3 due cards from your other notebooks into a normal review (switching topics helps memory)
+  let mix = [];
+  if (mode === 'due') {
+    mix = S.notebooks.filter((n) => n.id !== nb.id && n.digest).flatMap((n) => dueCards(n).map((card) => ({ nb: n, card })))
+      .sort(() => Math.random() - 0.5).slice(0, 3);
+  }
+  return beginSession('nb:' + nb.id, routeFocus, [...items, ...mix], (mode === 'cram' ? 40 : 20) + mix.length);
 }
 ACT['rc-conf'] = (el) => { UI.recall.conf = UI.recall.conf === el.dataset.c ? null : el.dataset.c; $$('[data-act="rc-conf"]').forEach((b) => b.classList.toggle('on', b.dataset.c === UI.recall.conf)); };
 // Clear-cut answers are graded on the spot (saves AI): near-identical to the key, or covering its key words.
@@ -2340,11 +2481,12 @@ async function recallApply(R) {
   schedule(card, btn, R.conf); record(nb, card.concept_id, { again: 0, hard: 0.5, good: R.conf === 'guess' ? 0.6 : 1, easy: 1 }[btn]);
   nb.progress.reviews++; R.tally[v]++;
   if (v === 'incorrect' && R.conf === 'sure') R.confMistakes++;
+  if (R.conf === 'sure') { R.sureN = (R.sureN || 0) + 1; if (v === 'correct') R.sureRight = (R.sureRight || 0) + 1; }
   if (v === 'correct' && R.conf === 'guess') R.luckyGuesses++;
   // due again within a few minutes: bring it back a few cards later in this session (at most twice)
   const n = (R.requeued ||= {})[card.id] || 0;
   if (card.srs.due - Date.now() <= 20 * 60e3 && n < 2) { R.requeued[card.id] = n + 1; R.queue.splice(Math.min(R.queue.length, R.i + 1 + (v === 'incorrect' ? 3 : 5)), 0, { nb: nb.id, card: card.id }); }
-  const xp = v === 'correct' ? 10 : v === 'partial' ? 5 : 2; R.xp += xp;
+  const xp = (v === 'correct' ? 10 : v === 'partial' ? 5 : 2) + (v === 'correct' && R.conf === 'sure' ? 2 : 0); R.xp += xp;
   await save(nb); await gainXP(xp);
   R.i++; R.result = null; R.draft = ''; R.conf = null; R.btn = null;
 }
@@ -2363,6 +2505,7 @@ function recallDone(el) {
     <div style="font-size:2.6rem">${total && t.correct / total >= 0.8 ? '🏆' : '💪'}</div><h2>Session complete</h2>
     <div class="row" style="justify-content:center"><span class="tag good">✅ ${t.correct}</span><span class="tag warn">🟡 ${t.partial}</span><span class="tag bad">❌ ${t.incorrect}</span><span class="tag accent">+${R.xp} XP</span></div>
     ${R.confMistakes ? `<p style="color:var(--bad)">⚠️ ${R.confMistakes} confident mistake${R.confMistakes > 1 ? 's' : ''}: things you were sure about but got wrong. They’ll come back first.</p>` : ''}
+    ${R.sureN ? `<p class="small">🎯 When you felt <b>sure</b>, you were right <b>${R.sureRight || 0} of ${R.sureN}</b> times${(R.sureRight || 0) / R.sureN >= 0.85 ? '. Your confidence matches what you know.' : '. Be careful: feeling sure isn’t the same as knowing it yet.'}</p>` : ''}
     ${R.luckyGuesses ? `<p class="small" style="color:var(--warn)">🎲 ${R.luckyGuesses} lucky guess${R.luckyGuesses > 1 ? 'es' : ''}, scheduled to come back sooner.</p>` : ''}
     <p class="muted">${next ? `Next review ${fmtDue(next.srs.due)}. Coming back then is what moves this into long-term memory.` : ''}</p>
     <div class="row" style="justify-content:center"><button class="btn" data-act="rc-reset">Back</button>${single ? `<a class="btn primary" href="#/nb/${single.id}/teach">Try teaching it back →</a>` : ''}</div></div></div>`;
@@ -2463,7 +2606,7 @@ ACT['teach-submit'] = async () => {
       history: hist.map((h) => ({ who: h.who, text: h.who === 'student' ? h.text : `score ${h.result?.score}; follow-up asked: ${h.result?.follow_up_question}` })) });
     hist.push({ who: 'student', text }, { who: 'tutor', result: r });
     record(nb, p.concept_id, Math.min(1, r.score / 100));
-    UI.teachDraft = ''; await save(nb); await gainXP(20, 'teach-back');
+    UI.teachDraft = ''; await save(nb); await gainXP(5 + Math.round((r.score || 0) / 4), 'teach-back');
   } catch (e) { aiError(e); }
   UI.teachBusy = false; render();
 };
@@ -2525,7 +2668,7 @@ async function sendChat(nb, text) {
         try { const ev = JSON.parse(line); if (ev.text) { out += ev.text; bubble.innerHTML = md(out); log.scrollTop = log.scrollHeight; } if (ev.error) toast(ev.error, 'err'); } catch { /* partial */ }
       }
     }
-    if (out) { nb.chat.push({ role: 'assistant', content: out }); await gainXP(2); }
+    if (out) { nb.chat.push({ role: 'assistant', content: out }); }
   } catch (e) { aiError(e); nb.chat.pop(); }
   UI.chatBusy = false; await save(nb);
   if (route().tab === 'tutor') render();
@@ -2629,7 +2772,7 @@ ACT['vid-play'] = (el) => { UI.vidPlay = el.dataset.id; render(); };
 ACT['vid-watched'] = async (el) => {
   const nb = curNb(); const v = nb.videos.find((x) => x.id === el.dataset.id); if (!v) return;
   v.watched = Date.now(); UI.vidPlay = null; await save(nb); render();
-  gainXP(10, 'Watched with a purpose');
+  gainXP(2, 'video watched');
 };
 ACT['vid-concept'] = (el) => {
   const nb = curNb(); const cid = el.dataset.cid;
@@ -2997,7 +3140,7 @@ function pmNotify(title, body) {
 }
 
 // ── controls ──
-function pmStart() { pmAudio(); const l = PM.left || PM.total; PM.running = true; PM.started = true; PM.endsAt = Date.now() + l * 1000; pmSave(); pmDrawAll(); }
+function pmStart() { pmAudio(); const l = PM.left || PM.total; if (!PM.started && PM.mode === 'focus') PM.xpAtStart = S.meta.xp; PM.running = true; PM.started = true; PM.endsAt = Date.now() + l * 1000; pmSave(); pmDrawAll(); }
 function pmPause() { PM.left = pmLeft(); PM.running = false; pmSave(); pmDrawAll(); }
 function pmReset() { PM = pmFresh(PM.mode, { cycle: PM.cycle, nb: PM.nb, last: PM.last }); pmSave(); pmDrawAll(); }
 function pmSkip() {
@@ -3011,8 +3154,9 @@ function pmFinish() {
   const was = PM.mode; const keep = { nb: PM.nb };
   if (was === 'focus') {
     const min = Math.round(PM.total / 60); const st = pmStats();
-    const xp = min >= PM_XP_MIN && st.xp < PM_XP_DAY ? PM_XP : 0;
-    const why = xp ? '' : min < PM_XP_MIN ? `Blocks under ${PM_XP_MIN} min don’t earn XP.` : `You’ve earned focus XP ${PM_XP_DAY} times today, the daily max. The timer still works.`;
+    const active = S.meta.xp - (PM.xpAtStart ?? S.meta.xp) >= 5; // answered questions during the block
+    const xp = min >= PM_XP_MIN && st.xp < PM_XP_DAY && active ? PM_XP : 0;
+    const why = xp ? '' : min < PM_XP_MIN ? `Blocks under ${PM_XP_MIN} min don’t earn XP.` : !active ? 'Focus XP is for active study: answer some questions (Recall, Learn checks, a test) during the block to earn it.' : `You’ve earned focus XP ${PM_XP_DAY} times today, the daily max. The timer still works.`;
     const cycle = PM.cycle + 1;
     PM = pmFresh(pmBreakNext(cycle), { ...keep, cycle, last: { min, xp, why, nb: PM.nb, round: cycle, at: Date.now() } });
     PM.screen = 'focusDone';
@@ -3066,7 +3210,7 @@ const pmMain = (cls = 'btn primary') => (PM.running ? `<button class="${cls}" da
 function pomoHomeHTML() {
   const st = pmStats(); const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
   const nbMin = PM.nb ? st.nb[PM.nb] || 0 : 0;
-  return `<div class="row between"><h2>⏳ Focus timer</h2><span class="small muted">Round ${pmRound()} of ${PMC.every} ${pmDots()}</span></div>
+  return `<div class="row between"><h2>⏳ Focus timer</h2><span class="small muted">Round ${pmRound()} of ${PMC.every} ${pmDots()} · <a href="#" data-act="pomo-expand">Hide ▴</a></span></div>
   <div class="card pm-home mode-${PM.mode}">
     <div class="pm-home-ring">${pmRing(160, 11)}<div class="pm-center"><b data-pm="time">${pmFmt(pmLeft())}</b><span>${PM.running ? PM_LAB[PM.mode].toLowerCase() : PM.started ? 'paused' : PM_LAB[PM.mode].toLowerCase()}</span></div></div>
     <div class="pm-home-side">
@@ -3074,11 +3218,18 @@ function pomoHomeHTML() {
       <label class="field"><span>Studying</span><select id="pmNb"><option value="">Not tied to a notebook</option>${nbs.map((n) => `<option value="${esc(n.id)}" ${PM.nb === n.id ? 'selected' : ''}>${esc(n.title)}</option>`).join('')}</select></label>
       <div class="row">${pmMain()}${PM.started ? '<button class="btn" data-act="pomo-reset">Reset</button>' : ''}<button class="btn ghost" data-act="pomo-skip">Skip ›</button></div>
       <div class="small muted">Today: ${st.blocks} focus block${st.blocks === 1 ? '' : 's'} · ${st.min} min${st.xp ? ` · +${st.xp * PM_XP} XP` : ''}${nbMin ? ` · ${nbMin} min on this notebook so far` : ''}</div>
-      <div class="small muted">+${PM_XP} XP per finished focus block (up to ${PM_XP_DAY} a day). Change the times in ⚙︎ Settings.</div>
+      <div class="small muted">+${PM_XP} XP per focus block where you answer questions (up to ${PM_XP_DAY} a day). Change the times in ⚙︎ Settings.</div>
     </div>
   </div>`;
 }
-function drawPomoHome() { const h = document.getElementById('pomoHome'); if (h) h.innerHTML = pomoHomeHTML(); }
+function pomoBarHTML() {
+  const st = pmStats();
+  return `<div class="card pm-bar mode-${PM.mode}">
+    ${pmRing(40, 5)}<div class="pm-bar-txt"><b>⏳ Focus timer</b><span class="small muted"><span data-pm="time">${pmFmt(pmLeft())}</span> · ${PM.running ? PM_LAB[PM.mode].toLowerCase() : PM.started ? 'paused' : PM_LAB[PM.mode].toLowerCase()}${st.blocks ? ` · ${st.blocks} today` : ''}</span></div>
+    ${pmMain('btn sm primary')}<button class="btn sm ghost" data-act="pomo-expand" aria-label="Show timer options"><span class="hide-sm">Options </span>▾</button></div>`;
+}
+ACT['pomo-expand'] = () => { UI.pmOpen = !UI.pmOpen; drawPomoHome(); };
+function drawPomoHome() { const h = document.getElementById('pomoHome'); if (h) h.innerHTML = UI.pmOpen ? pomoHomeHTML() : pomoBarHTML(); }
 
 function drawPill() {
   let el = document.getElementById('pomoPill');

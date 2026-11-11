@@ -262,6 +262,7 @@
     help: obj({ answer: S }),
     review: obj({ fixes: arr(obj({ find: S, replace: S, why: S })) }),
     openQs: obj({ items: arr(obj({ question: S, answer: S })) }),
+    dedupe: obj({ repeats: { type: 'array', items: N } }),
     recallCheck: obj({ hits: arr(obj({ got: { type: 'boolean' }, note: S })) }),
     sectionTest: obj({
       mcq: arr(obj({ question: S, options: SA, answer: S, explanation: S, concept_id: S, review: { type: 'boolean' } })),
@@ -314,7 +315,7 @@ sections or jump ahead to later ones. Never cite slide or page numbers anywhere.
   connect the section's main ideas ("Explain how … and why …"). key_points: the 3–5 points a strong answer includes.
   model: a model answer of ≤80 words in plain language.
 - concept_id on each mcq: the id of the concept it tests (from the given ids). review: false, except as below.
-- If earlier sections are listed, make the LAST mcq a review question about an earlier section (review: true) so
+- If earlier sections are listed, make the LAST TWO mcqs review questions about earlier sections (review: true) so
   the student keeps older material fresh. If none are listed, all are about this section. Never ask about later
   sections' topics.
 - Never make three options the same kind of thing so the odd one out is obviously right. No absurd options.
@@ -345,6 +346,10 @@ sentence, never a JSON key), replace = the corrected text, why = ≤8 words. Fix
    everyday words, keeping the meaning;
 3. "(Slide N)" / "(p. N)" citations and references to option numbers or letters ("Option one", "choice B"): remove them;
 4. a test question or option that is impossible or absurd. Keep fixes small. If everything is fine, return [].`,
+    dedupe: `A student has already answered the ALREADY ASKED questions. For each CANDIDATE question, decide if it is a
+repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently (e.g. "Why don't
+valves need muscles?" and "Why do valves work passively?" are repeats). A candidate that tests a different fact,
+direction, structure or step is NOT a repeat. Return the numbers of the repeat candidates (empty if none).`,
     open_questions: `Turn each multiple-choice question into an open question a student can answer from memory with no
 options shown. Keep the same fact being tested. Never use "Which of the following". answer = the correct answer in
 ≤20 plain words. Return one item per question, in order.`,
@@ -465,7 +470,9 @@ For each topic, write the YouTube search that will surface a great teaching vide
         (p.steps || []).length ? 'What the lesson taught, step by step:' : '', ...(p.steps || []).map((x) => `- ${x}`),
         (p.used || []).length ? 'Quick-check questions already asked (don\'t repeat):' : '', ...(p.used || []).map((x) => `- ${x}`),
         (p.concepts || []).length ? 'Concept ids:' : '', ...(p.concepts || []).map((c) => `- ${c.id}: ${c.name}`),
-        (p.earlier || []).length ? 'Earlier sections (for the one review question):' : 'No earlier sections.',
+        (p.seen || []).length ? 'Questions this student has ALREADY been asked in this notebook (never repeat or reword these; test different facts or angles):' : '',
+        ...(p.seen || []).map((x) => `- ${x}`),
+        (p.earlier || []).length ? 'Earlier sections (for the review questions):' : 'No earlier sections.',
         ...(p.earlier || []).map((e) => `- ${e.title}: ${(e.points || []).join('; ')}`),
         'Write the section test now.'].filter(Boolean).join('\n');
       return callJSON({ sources: p.sources, task: TASK.section_test, parts: msg, schema: SCHEMA.sectionTest, thinking: 512, maxTokens: 6000, wait: 90000 });
@@ -487,13 +494,17 @@ For each topic, write the YouTube search that will surface a great teaching vide
       const msg = `Lesson JSON to check:\n${JSON.stringify(p.lesson).slice(0, 14000)}`;
       return callJSON({ sources: p.sources, task: TASK.lesson_review, parts: msg, schema: SCHEMA.review, thinking: 512, maxTokens: 4000, wait: 90000 });
     },
+    dedupe(p) {
+      const msg = `ALREADY ASKED:\n${(p.asked || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\nCANDIDATES:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
+      return callJSON({ task: TASK.dedupe, parts: msg, schema: SCHEMA.dedupe, thinking: 256, maxTokens: 600, tier: 'lite' });
+    },
     open_questions(p) {
       const msg = (p.items || []).map((x, i) => `${i + 1}. ${x.question}\nOptions: ${(x.options || []).join(' | ')}\nCorrect: ${x.answer}`).join('\n\n');
       return callJSON({ task: TASK.open_questions, parts: msg, schema: SCHEMA.openQs, thinking: 0, maxTokens: 2000, tier: 'lite' });
     },
     lesson_help(p) {
       const earlier = (p.earlier || []).map((h) => `- (${h.mode}) ${h.a}`).join('\n');
-      const msg = `Lesson section: ${p.title || ''}\nStep: ${p.step_title || ''}\nWhat the step taught:\n${p.explain || ''}\n${p.example ? `Its example: ${p.example}\n` : ''}Mode: ${p.mode}\n${p.question ? `Student's question: ${p.question}\n` : ''}${earlier ? `Help already given on this step:\n${earlier}\n` : ''}`;
+      const msg = `Lesson section: ${p.title || ''}\nStep: ${p.step_title || ''}\nWhat the step taught:\n${p.explain || ''}\n${p.example ? `Its example: ${p.example}\n` : ''}Mode: ${p.mode}\n${p.question ? `Student's question: ${p.question}\n` : ''}${p.guess ? `Student's own guess at what the step means (react to it first in one short sentence: what's right, what's off): ${p.guess}\n` : ''}${earlier ? `Help already given on this step:\n${earlier}\n` : ''}`;
       return callJSON({ sources: p.mode === 'question' ? p.sources : null, task: TASK.help, parts: msg, schema: SCHEMA.help, thinking: 0, maxTokens: 1200, tier: 'lite' });
     },
     async grade(p) {
