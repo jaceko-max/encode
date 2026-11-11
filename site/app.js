@@ -930,8 +930,8 @@ const STAGES = [
   { k: 'practice', label: 'Practice', ico: '🧠', tabs: ['recall', 'teach', 'exam'], home: 'recall' },
   { k: 'more', label: 'More', ico: '⋯', tabs: ['sources', 'tutor', 'progress'], home: 'sources' },
 ];
-const stageOf = (tab) => STAGES.find((s) => s.tabs.includes(tab)) || STAGES[2];
-const KIT_TABS = ['pretest', 'lessons', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
+const stageOf = (tab) => (tab === 'deep' ? STAGES[0] : STAGES.find((s) => s.tabs.includes(tab)) || STAGES[2]);
+const KIT_TABS = ['pretest', 'lessons', 'deep', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
 function renderNotebook(nb, tab, arg) {
   if (tab === 'learn' && nb.digest && !nb.progress.learn) { nb.progress.learn = true; save(nb); }
   const steps = pathSteps(nb); const next = nextStep(nb); const due = dueCards(nb).length;
@@ -962,7 +962,7 @@ function renderNotebook(nb, tab, arg) {
   const needsKit = KIT_TABS.includes(tab) && !nb.digest;
   const el = $('#tab');
   if (needsKit) return renderNeedKit(nb, el);
-  ({ sources: renderSources, pretest: renderPretest, lessons: renderLessons, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress }[tab] || renderSources)(nb, el, arg);
+  ({ sources: renderSources, pretest: renderPretest, lessons: renderLessons, deep: renderDeep, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress }[tab] || renderSources)(nb, el, arg);
   if (tab === 'videos' && UI.vidFocus) {
     const id = UI.vidFocus; UI.vidFocus = null;
     const card = [...el.querySelectorAll('[data-vid]')].find((x) => x.dataset.vid === String(id));
@@ -1659,6 +1659,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
         : `<div class="paper-box"><div class="paper-ico big">📝</div><div><b>Grab paper and a pen</b>
           <p class="small" style="margin:2px 0 0">Each step has one thing to sketch or jot down.</p>
           ${PAPER_WHY}<div class="row" style="margin-top:8px"><button class="btn primary sm" data-act="paper-ready">✓ Ready</button></div></div></div>`}
+      <div class="small muted">Already know the basics? <a href="#/nb/${nb.id}/deep/${i}">🔎 Go deeper on this section</a></div>
       ${d.fallback ? `<div class="small muted">This is a simpler lesson made from your study cards. <a href="#" data-act="lesson-rewrite">✨ Rewrite it with AI</a></div>` : ''}`;
   }
   if (s.k === 'step') {
@@ -1675,7 +1676,8 @@ function lessonStageHTML(nb, i, L, s, steps) {
       <div class="lesson-help-row">
         <button class="btn sm ghost" data-act="lesson-guess" data-mode="simpler" ${busy ? 'disabled' : ''}>🧒 Simpler</button>
         <button class="btn sm ghost" data-act="lesson-guess" data-mode="example" ${busy ? 'disabled' : ''}>💡 Example</button>
-        <button class="btn sm ghost" data-act="lesson-ask" ${busy ? 'disabled' : ''}>❓ Ask</button></div>
+        <button class="btn sm ghost" data-act="lesson-ask" ${busy ? 'disabled' : ''}>❓ Ask</button>
+        <a class="btn sm ghost" href="#/nb/${nb.id}/deep/${i}" title="The mechanism in depth, picture walk-through, common mistakes and harder questions">🔎 Go deeper</a></div>
       ${UI.lessonGuess?.key === `${nb.id}:${i}:${s.j}` ? `<div class="lesson-ask guess-box"><b>🤔 Quick guess first</b>
         <div class="small muted">In your own words, what do you think this step is saying? A rough guess is fine. Guessing first makes the explanation stick.</div>
         <textarea id="lessonGuessIn" rows="2" placeholder="I think it means…"></textarea>
@@ -1753,6 +1755,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
     <div class="row lesson-done-row">${nx !== null ? `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">Next: ${esc(nb.digest.cards[nx].title)} →</button>`
       : `<a class="btn primary lg" href="#/nb/${nb.id}/recall">🧠 Last section done! Start recall →</a>`}
       <a class="btn" href="#/nb/${nb.id}/lessons">All sections</a>
+      <a class="btn" href="#/nb/${nb.id}/deep/${i}">🔎 Go deeper</a>
       <button class="btn ghost" data-act="lesson-retake" data-i="${i}">↻ Retake this section</button></div>
     <div class="small muted" style="text-align:center">A retake runs the lesson again with a brand-new test, so you’re recalling, not remembering the same questions.</div>`;
 }
@@ -1933,6 +1936,168 @@ ACT['lesson-teach'] = async () => {
   if (route().tab === 'lessons' && +route().arg === i) { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); }
 };
 ACT['lesson-teach-again'] = async () => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); UI.teachBackDraft = ''; delete L.teach; await save(nb); const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); };
+
+// ═════════════════════════ GO DEEPER: one section in depth ═════════════════════════
+// For when the beginner lesson isn't enough: the mechanism step by step, a walk-through of the slide pictures,
+// common mistakes and harder exam-style questions. Anything not from the student's own material is labelled.
+function deepOf(nb, i) { const D = (nb.deep || {})[i]; const c = nb.digest?.cards[i]; return D && c && D.title === c.title ? D : null; }
+const BEYOND = '<span class="tag beyond" title="Not in your uploaded material: general A&P knowledge. Check it against your professor’s slides.">🌐 Beyond your notes</span>';
+async function buildDeep(nb, i) {
+  const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`; (UI.deepBusy ||= {})[key] = true;
+  const prev = deepOf(nb, i) || (UI.deepPrev?.title === c.title ? UI.deepPrev : null); UI.deepPrev = null;
+  try {
+    if (!(await aiReady())) { const e = new Error('Going deeper needs the AI tutor. See Settings.'); e.code = 'no_key'; throw e; }
+    await loadVisuals(nb);
+    const shots = cardShots(nb, c, 3); const images = [];
+    for (const [k, sh] of shots.entries()) { try { images.push({ n: k + 1, label: `${sh.kind === 'pdf' ? 'Page' : 'Slide'} ${sh.n}`, data: await shrinkDataUrl(sh.src, 900, 0.75) }); } catch { /* skip */ } }
+    const L = lessonOf(nb, i);
+    const asked = [...(L?.data?.steps || []).map((s) => s.check?.question).filter(Boolean), ...(L?.test?.mcq || []).map((q) => q.question),
+      ...(prev?.asked || []), ...(prev?.data?.questions || []).map((q) => q.question)].slice(-40);
+    const r = await ai('deep_dive', {
+      sources: aiSources(nb), images, title: c.title, points: c.points,
+      concepts: (c.concept_ids || []).map((id) => nb.digest.concepts.find((x) => x.id === id)).filter(Boolean).map((x) => ({ id: x.id, name: x.name, definition: x.definition })),
+      lesson: (L?.data?.steps || []).map((s) => s.title), asked, others: nb.digest.cards.filter((_, k) => k !== i).map((x) => x.title), previous: prev?.count || 0,
+    });
+    tidyDeep(r); fixCauseClaims(r);
+    r.questions = (r.questions || []).map((q) => {
+      if (q.type !== 'mcq') return { ...q, options: [] };
+      const s = shuffleOpts(q); return s ? { ...s, type: 'mcq', beyond: !!q.beyond } : { ...q, type: 'short', options: [] };
+    });
+    r.pictures = (r.pictures || []).filter((p) => p.image >= 1 && p.image <= shots.length && (p.walkthrough || []).length);
+    if (!(r.layers || []).length) throw new Error('The deep dive came back empty. Try again.');
+    nb.deep ||= {};
+    nb.deep[i] = { title: c.title, data: r, at: Date.now(), answers: {}, count: (prev?.count || 0) + 1, asked, toRecall: false };
+    await save(nb);
+  } catch (e) { aiError(e); }
+  delete UI.deepBusy[key];
+}
+function renderDeep(nb, el, arg) {
+  const i = +arg; const c = nb.digest?.cards[i];
+  if (!c) return go(`#/nb/${nb.id}/lessons`);
+  const D = deepOf(nb, i); const key = `${nb.id}:${i}`;
+  const top = `<div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a><a href="#/nb/${nb.id}/lessons/${i}" class="small">Back to the lesson</a></div>`;
+  if (!D) {
+    el.innerHTML = `<div class="lesson-wrap">${top}<div class="card building lesson-card"><div style="font-size:2.4rem">🔎</div><h2 style="margin:6px 0">Going deeper: ${esc(c.title)}</h2>
+      <div class="spinner lg" style="margin:14px auto"></div><p class="muted" style="margin:0">Working out the mechanism, walking through the slide pictures, and writing harder questions…</p>
+      <p class="small muted">Usually 20–45 seconds. It’s saved for next time.</p></div></div>`;
+    if (!UI.deepBusy?.[key]) buildDeep(nb, i).then(() => { if (route().tab === 'deep' && +route().arg === i) render(); });
+    return;
+  }
+  const d = D.data; UI.shots = UI.shots || {};
+  const shots = cardShots(nb, c, 3);
+  const qs = d.questions || []; const done = Object.keys(D.answers).length; const right = qs.filter((q, k) => (D.answers[k]?.ok ?? 0) >= 1).length;
+  el.innerHTML = `<div class="lesson-wrap deep">
+    ${top}
+    <div class="card lesson-card">
+      <div class="lesson-kicker">🔎 Deep dive${D.count > 1 ? ` #${D.count}` : ''}</div><h2>${esc(c.title)}</h2>
+      <div class="lesson-text">${md(d.overview)}</div>
+      <div class="small muted">Unmarked = from your notes. ${BEYOND} = extra detail from general A&amp;P knowledge, so double-check it against your professor’s slides.</div>
+      <div class="deep-toc">${[['dl', '🧩 How it really works'], d.pictures?.length ? ['dp', '🖼️ Picture walk-through'] : null, ['dm', '⚠️ Common mistakes'], ['dq', `🎯 Harder questions (${done}/${qs.length})`]].filter(Boolean).map(([id, l]) => `<a href="#" data-act="deep-jump" data-to="${id}">${l}</a>`).join('')}</div>
+    </div>
+
+    <section class="card lesson-card" id="dl"><div class="lesson-kicker">Part 1</div><h2>🧩 How it really works</h2>
+      ${(d.layers || []).map((x, k) => `<div class="deep-layer"><div class="deep-n">${k + 1}</div><div class="deep-body">
+        <h3>${esc(x.title)} ${x.beyond ? BEYOND : ''}</h3>
+        ${x.plain ? `<div class="lesson-plain"><span>🗣️ In plain words</span>${esc(x.plain)}</div>` : ''}
+        <div class="lesson-text">${md(x.explain)}</div></div></div>`).join('')}
+      ${(d.connections || []).length ? `<div class="lesson-box plain"><b>🔗 How it connects</b><ul>${d.connections.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+    </section>
+
+    ${d.pictures?.length ? `<section class="card lesson-card" id="dp"><div class="lesson-kicker">Part 2</div><h2>🖼️ Picture walk-through</h2>
+      <p class="small muted" style="margin:0">Look at each part in order. Tap a picture to zoom in.</p>
+      ${d.pictures.map((p) => { const sh = shots[p.image - 1]; return `<div class="deep-pic">
+        ${sh ? shotStrip(`deep${i}_${p.image}`, [sh]) : ''}
+        <div><h3>${esc(p.title)}</h3><ol class="deep-walk">${p.walkthrough.map((w) => `<li><b>${esc(w.part)}</b><span>${esc(w.explain)}</span></li>`).join('')}</ol></div></div>`; }).join('')}
+    </section>` : ''}
+
+    <section class="card lesson-card" id="dm"><div class="lesson-kicker">Part ${d.pictures?.length ? 3 : 2}</div><h2>⚠️ Common mistakes</h2>
+      ${(d.mistakes || []).map((m) => `<div class="deep-mistake">
+        <div class="dm-wrong">❌ <span>${esc(m.mistake)}</span> ${m.beyond ? BEYOND : ''}</div>
+        <div class="dm-right">✅ <span>${esc(m.truth)}</span></div>
+        ${m.tip ? `<div class="dm-tip">💡 ${esc(m.tip)}</div>` : ''}</div>`).join('')}
+    </section>
+
+    <section class="card lesson-card" id="dq"><div class="lesson-kicker">Part ${d.pictures?.length ? 4 : 3}</div><h2>🎯 Harder questions</h2>
+      <p class="small muted" style="margin:0">Exam-style: application and patient scenarios. No peeking.${done ? ` ${right}/${done} right so far.` : ''}</p>
+      ${qs.map((q, k) => deepQHTML(nb, i, D, q, k)).join('')}
+      ${done === qs.length && qs.length ? `<div class="lesson-box ex"><b>Done: ${right} of ${qs.length} right.</b><div class="small">${right === qs.length ? 'You really know this section. 🎉' : `The ${qs.length - right} you missed ${D.toRecall ? 'were added to Recall, so they come back tomorrow.' : 'are being added to Recall…'}`}</div></div>` : ''}
+    </section>
+
+    <div class="lesson-nav"><a class="btn ghost" href="#/nb/${nb.id}/lessons/${i}">‹ Back to the lesson</a><button class="btn" data-act="deep-again" data-i="${i}">↻ Go even deeper</button></div>
+  </div>`;
+}
+function deepQHTML(nb, i, D, q, k) {
+  const a = D.answers[k]; const grading = UI.deepGrading === `${nb.id}:${i}:${k}`;
+  let body;
+  if (q.type === 'mcq') {
+    body = `<div class="lesson-opts">${q.options.map((o, n) => { const cls = a ? (o === q.answer ? 'right' : a.pick === n ? 'wrong' : 'dim') : '';
+      return `<button class="opt ${cls}" data-act="deep-mcq" data-q="${k}" data-o="${n}" ${a ? 'disabled' : ''}><span class="opt-l">${'ABCD'[n] || n + 1}</span><span>${esc(o)}</span></button>`; }).join('')}</div>`;
+  } else if (a) {
+    body = `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(a.text)}</div></div>`;
+  } else {
+    body = `<textarea data-dq="${k}" rows="3" placeholder="Explain the cause → effect chain…" ${grading ? 'disabled' : ''}>${esc(UI.deepDraft?.[`${i}:${k}`] || '')}</textarea>
+      <div class="row"><button class="btn primary sm" data-act="deep-short" data-q="${k}" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : 'Check my answer'}</button></div>`;
+  }
+  const v = a?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
+  return `<div class="test-q deep-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${esc(q.question)} ${q.beyond ? BEYOND : ''}</b></div>${body}
+    ${a ? `<div class="verdict ${v}"><h3>${head}</h3>${a.feedback ? `<div class="small">${esc(a.feedback)}</div>` : ''}
+      ${q.type === 'short' ? `<div class="small" style="margin-top:6px"><b>Answer:</b> ${esc(q.answer)}</div>` : ''}
+      ${q.explanation ? `<div class="small" style="margin-top:6px">${esc(q.explanation)}</div>` : ''}</div>` : ''}</div>`;
+}
+function deepRedraw(nb, i) { const y = window.scrollY; renderDeep(nb, $('#tab'), i); window.scrollTo(0, y); }
+document.addEventListener('input', (e) => { const k = e.target.dataset?.dq; if (k !== undefined) (UI.deepDraft ||= {})[`${route().arg}:${k}`] = e.target.value; });
+ACT['deep-jump'] = (el) => { const t = document.getElementById(el.dataset.to); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 130, behavior: 'smooth' }); };
+async function deepAnswered(nb, i, D) {
+  const qs = D.data.questions || [];
+  if (Object.keys(D.answers).length < qs.length || D.toRecall) return;
+  D.toRecall = true;
+  // missed questions come back in Recall tomorrow (multiple choice rewritten as open questions)
+  const missed = qs.map((q, k) => ({ q, a: D.answers[k] })).filter((x) => (x.a?.ok ?? 0) < 1);
+  if (missed.length) {
+    const have = new Set(nb.cards.map((c) => norm(c.question)));
+    const items = missed.filter((x) => !have.has(norm(x.q.question)));
+    const mcqs = items.filter((x) => x.q.type === 'mcq'); let open = null;
+    if (mcqs.length && S.status.claude) { try { const r = await ai('open_questions', { items: mcqs.map((x) => ({ question: x.q.question, options: x.q.options, answer: x.q.answer })) }); if (r.items?.length === mcqs.length) open = r.items; } catch { /* keep wording */ } }
+    let m = 0;
+    for (const x of items) {
+      let question = x.q.question, answer = x.q.answer;
+      if (x.q.type === 'mcq') { const o = open?.[m++]; if (o?.question) { question = o.question; answer = o.answer || answer; } else question = `${question}\n\nChoices: ${x.q.options.join(' · ')}`; }
+      nb.cards.push({ id: uid(), question, answer, concept_id: itemConcept(nb, i, x.q), kind: 'apply', from: 'deep', srs: { ...newSrs(), due: Date.now() + 86400e3 }, history: [] });
+    }
+    toast(`🧠 ${items.length} missed question${items.length > 1 ? 's' : ''} added to Recall for tomorrow`);
+  }
+  await save(nb);
+}
+ACT['deep-mcq'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const D = deepOf(nb, i); const k = +el.dataset.q; if (!D || D.answers[k]) return;
+  const q = D.data.questions[k]; const pick = +el.dataset.o; const ok = q.options[pick] === q.answer;
+  D.answers[k] = { pick, ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: ok ? '' : `The answer is: ${q.answer}` };
+  record(nb, itemConcept(nb, i, q), ok ? 1 : 0); await save(nb); deepRedraw(nb, i);
+  if (ok) gainXP(3, 'deep-dive question');
+  await deepAnswered(nb, i, D); deepRedraw(nb, i);
+};
+ACT['deep-short'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const D = deepOf(nb, i); const k = +el.dataset.q; if (!D || D.answers[k]) return;
+  const q = D.data.questions[k]; const text = (document.querySelector(`[data-dq="${k}"]`)?.value || '').trim();
+  if (wordCount(text) < 3) { toast('Write your answer first: a sentence or two.'); return; }
+  UI.deepGrading = `${nb.id}:${i}:${k}`; deepRedraw(nb, i);
+  let r = quickGrade(text, q.answer);
+  if (!r && S.status.claude) { try { r = await ai('grade', { concept: nb.digest.cards[i].title, question: q.question, answer: q.answer, response: text }); } catch (e) { aiError(e); } }
+  if (!r?.verdict) { const cv = coverage(text, q.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare with the answer below.' }; }
+  const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
+  D.answers[k] = { text, ok, verdict: r.verdict, feedback: r.feedback || '' }; UI.deepGrading = null;
+  record(nb, itemConcept(nb, i, q), ok); await save(nb); deepRedraw(nb, i);
+  if (ok) gainXP(ok >= 1 ? 4 : 2, 'deep-dive question');
+  await deepAnswered(nb, i, D); deepRedraw(nb, i);
+};
+ACT['deep-again'] = async (el) => {
+  const nb = curNb(); const i = +el.dataset.i; const D = deepOf(nb, i); if (!D) return;
+  if (!confirm('Make a new deep dive with fresh angles and new questions? This one will be replaced.')) return;
+  D.asked = [...(D.asked || []), ...(D.data.questions || []).map((q) => q.question)].slice(-40);
+  const keep = { title: D.title, count: D.count, asked: D.asked, data: D.data };
+  delete nb.deep[i]; await save(nb);
+  UI.deepPrev = keep; render(); window.scrollTo(0, 0);
+};
 
 // Moving between steps re-draws only the lesson and keeps it in view.
 function lessonShow(nb, i) {
@@ -2123,7 +2288,8 @@ function summaryCard(nb, c, i, mode) {
   const head = `<div class="row between"><span class="emoji">${esc(c.emoji)}</span><span class="ref">${esc(refLabel(nb, c.source_ref))}</span></div>${cardPictures(nb, c, i)}<h3 style="margin:0">${esc(c.title)}</h3>`;
   if (mode === 'study') {
     return `<div class="card scard">${head}<ul>${c.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
-      ${c.analogy ? `<div class="analogy">🔗 ${esc(c.analogy)}</div>` : ''}</div>`;
+      ${c.analogy ? `<div class="analogy">🔗 ${esc(c.analogy)}</div>` : ''}
+      <a class="btn sm ghost deep-link" href="#/nb/${nb.id}/deep/${i}">🔎 Go deeper</a></div>`;
   }
   if (!st?.revealed) {
     return `<div class="card scard">${head}<div class="small muted">What were the ${c.points.length} key points? Write everything you can recall.</div>

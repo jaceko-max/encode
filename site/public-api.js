@@ -263,6 +263,14 @@
     review: obj({ fixes: arr(obj({ find: S, replace: S, why: S })) }),
     openQs: obj({ items: arr(obj({ question: S, answer: S })) }),
     dedupe: obj({ repeats: { type: 'array', items: N } }),
+    deep: obj({
+      overview: S,
+      layers: arr(obj({ title: S, plain: S, explain: S, beyond: { type: 'boolean' } })),
+      pictures: arr(obj({ image: N, title: S, walkthrough: arr(obj({ part: S, explain: S })) })),
+      mistakes: arr(obj({ mistake: S, truth: S, tip: S, beyond: { type: 'boolean' } })),
+      questions: arr(obj({ type: { type: 'string', enum: ['mcq', 'short'] }, question: S, options: SA, answer: S, explanation: S, concept_id: S, beyond: { type: 'boolean' } })),
+      connections: SA,
+    }),
     recallCheck: obj({ hits: arr(obj({ got: { type: 'boolean' }, note: S })) }),
     sectionTest: obj({
       mcq: arr(obj({ question: S, options: SA, answer: S, explanation: S, concept_id: S, review: { type: 'boolean' } })),
@@ -346,6 +354,29 @@ sentence, never a JSON key), replace = the corrected text, why = ≤8 words. Fix
    everyday words, keeping the meaning;
 3. "(Slide N)" / "(p. N)" citations and references to option numbers or letters ("Option one", "choice B"): remove them;
 4. a test question or option that is impossible or absurd. Keep fixes small. If everything is fine, return [].`,
+    deep_dive: `A student finished the beginner lesson on ONE section of this lecture and wants to GO DEEPER. The beginner
+lesson felt too thin, so give real depth while staying easy to read.
+STYLE: plain words first, then the technical term; short sentences; no filler. Accuracy matters more than length.
+SOURCES: use the lecture material first. You MAY add detail from general, well-established A&P knowledge (mechanisms,
+the "why", clinical relevance), but set beyond: true on any layer, mistake or question whose key content is NOT in the
+lecture material. Never contradict the material. Don't cite slide or page numbers.
+- overview: 2 sentences: what the deeper picture is and why it matters.
+- layers: 4–7 layers that go past the summary, in a logical order: the step-by-step mechanism, the WHY behind each
+  step, cause → effect chains, what happens when it goes wrong (clinical), and how it links to the rest of the lecture.
+  title ≤6 words; plain: the idea in one everyday sentence (≤20 words); explain: Markdown, ≤110 words, a short lead
+  sentence then 2–4 "- " bullets, **bold** key terms defined in plain words.
+- pictures: for each attached slide picture that teaches something (skip logos/decorative ones), a walk-through:
+  image = its number (1 for the first attached picture, 2 for the second…); title ≤8 words; walkthrough: 3–6 parts in a
+  sensible viewing order, each naming WHERE to look ("the layer at the top", "the arrow on the left", "the blue
+  structure") and explaining what it is and why it matters (≤35 words each). If none are attached, return [].
+- mistakes: 3–5 common misconceptions students have about this topic: mistake (what students wrongly think, ≤20 words),
+  truth (the correct idea, ≤30 words), tip (a quick way to remember the difference, ≤20 words).
+- questions: 6 HARDER questions than the beginner lesson: 2 "mcq" application questions, 2 "mcq" clinical-scenario
+  questions (nursing/NCLEX style: a short patient situation), 2 "short" explain-why questions needing a cause→effect
+  chain. mcq: exactly 4 options (≤14 words), plausible distractors, answer = exact text of the correct option.
+  short: options = [], answer = the essential chain in ≤40 words. explanation ≤35 words (name the tempting wrong
+  option by its wording, never "option B"). concept_id from the given ids. Never repeat the already-asked questions.
+- connections: 2–4 one-line links to other sections of this lecture or other body systems.`,
     dedupe: `A student has already answered the ALREADY ASKED questions. For each CANDIDATE question, decide if it is a
 repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently (e.g. "Why don't
 valves need muscles?" and "Why do valves work passively?" are repeats). A candidate that tests a different fact,
@@ -493,6 +524,18 @@ For each topic, write the YouTube search that will surface a great teaching vide
     lesson_review(p) {
       const msg = `Lesson JSON to check:\n${JSON.stringify(p.lesson).slice(0, 14000)}`;
       return callJSON({ sources: p.sources, task: TASK.lesson_review, parts: msg, schema: SCHEMA.review, thinking: 512, maxTokens: 4000, wait: 90000 });
+    },
+    deep_dive(p) {
+      const parts = [];
+      for (const im of (p.images || []).slice(0, 4)) { if (im.data) parts.push({ text: `[picture ${im.n}] ${im.label || ''}` }, { inlineData: { mimeType: 'image/jpeg', data: im.data } }); }
+      parts.push({ text: [`Section: ${p.title || ''}`, 'Key points:', ...(p.points || []).map((x) => `- ${x}`),
+        (p.concepts || []).length ? 'Concepts (ids):' : '', ...(p.concepts || []).map((c) => `- [${c.id}] ${c.name}: ${c.definition}`),
+        (p.lesson || []).length ? 'What the beginner lesson already covered:' : '', ...(p.lesson || []).map((x) => `- ${x}`),
+        (p.asked || []).length ? 'Questions already asked (never repeat):' : '', ...(p.asked || []).map((x) => `- ${x}`),
+        (p.others || []).length ? `Other sections of this lecture: ${p.others.join('; ')}` : '',
+        p.previous ? `This is deep dive #${p.previous + 1}: cover NEW angles, mistakes and questions, not the ones from before.` : '',
+        `${(p.images || []).length} slide picture(s) attached. Write the deep dive now.`].filter(Boolean).join('\n') });
+      return callJSON({ sources: p.sources, task: TASK.deep_dive, parts, schema: SCHEMA.deep, thinking: 1024, maxTokens: 16000, wait: 150000 });
     },
     dedupe(p) {
       const msg = `ALREADY ASKED:\n${(p.asked || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\nCANDIDATES:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;

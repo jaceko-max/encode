@@ -982,3 +982,26 @@ html.pm-open { overflow: hidden; }
   .hero .stat-grid .stat b { font-size: .92rem; display: block; line-height: 1.2; }
   .hero .stat-grid .stat span { font-size: .66rem; }
 }
+
+/* ═════════════ go deeper ═════════════ */
+.tag.beyond { font-size: .68rem; vertical-align: middle; font-weight: 600; background: color-mix(in srgb, #a78bfa 18%, var(--surface-2)); color: #ddd6fe; white-space: nowrap; }
+.deep-toc { display: flex; flex-wrap: wrap; gap: 6px; }
+.deep-toc a { font-size: .85rem; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); text-decoration: none; }
+.deep-toc a:hover { border-color: #4f7dff; }
+.deep-layer { display: flex; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.deep-layer:first-of-type { border-top: 0; padding-top: 0; }
+.deep-n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #04121f; background: var(--grad, linear-gradient(135deg, #4f7dff, #3dd6f5)); }
+.deep-body { flex: 1; min-width: 0; display: grid; gap: 8px; }
+.deep-body h3 { margin: 2px 0 0; }
+.deep-pic { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 16px; align-items: start; padding-top: 12px; border-top: 1px solid var(--border); }
+.deep-pic h3 { margin: 0 0 6px; }
+.deep-walk { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.deep-walk li { display: grid; gap: 2px; } .deep-walk li span { font-size: .92rem; color: var(--muted); }
+.deep-walk li::marker { color: #3dd6f5; font-weight: 700; }
+.deep-mistake { display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.dm-wrong { color: #fca5a5; } .dm-wrong span { text-decoration: line-through; text-decoration-color: rgba(252, 165, 165, .5); }
+.dm-right { color: #86efac; } .dm-tip { font-size: .9rem; color: var(--muted); }
+.deep-q { padding-top: 12px; border-top: 1px solid var(--border); }
+.deep-q textarea { width: 100%; }
+.scard .deep-link { justify-self: start; margin-top: auto; }
+@media (max-width: 620px) { .deep-pic { grid-template-columns: 1fr; } }
