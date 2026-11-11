@@ -912,3 +912,10 @@ html.pm-open { overflow: hidden; }
 .chip-btn.on { color: #04121f; background: #3dd6f5; border-color: transparent; }
 @media (pointer: coarse) { .chip-btn { min-height: 36px; } }
 .review-tag { font-size: .7rem; vertical-align: middle; background: color-mix(in srgb, #facc15 18%, var(--surface-2)); color: #fde68a; }
+
+/* plain-words line + hint stage */
+.lesson-plain { display: grid; gap: 4px; padding: 10px 14px; border-radius: 12px; font-size: 1.05rem; line-height: 1.5;
+  background: color-mix(in srgb, #4ade80 9%, var(--surface-2)); border: 1px solid color-mix(in srgb, #4ade80 35%, var(--border)); }
+.lesson-plain span { font: 700 .72rem "Chakra Petch", var(--font); letter-spacing: .06em; text-transform: uppercase; color: #86efac; }
+.opt.crossed span:last-child { text-decoration: line-through; opacity: .7; }
+.hint-box { border: 1px dashed color-mix(in srgb, #facc15 50%, var(--border)); }

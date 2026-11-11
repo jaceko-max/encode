@@ -1337,7 +1337,7 @@ ACT['redo-pretest'] = async () => { const nb = curNb(); nb.pretest = { done: fal
 // The old all-at-once cards page is now the Revise tab.
 // Before writing a lesson or test, make sure we know whether the AI is on (right after a reload it may not be checked yet).
 async function aiReady() { if (!S.status.checked) { try { await refreshStatus(); } catch { /* offline */ } } return !!S.status.claude; }
-const LESSON_V = 3; // v2 = shorter, bullet-first; v3 = harder checks with concept ids
+const LESSON_V = 4; // v2 shorter; v3 harder checks + concept ids; v4 plain-words line, hints, fact-check pass
 function lessonOf(nb, i) {
   const L = (nb.lessons || {})[i]; const c = nb.digest?.cards[i];
   return L && c && L.title === c.title ? L : null;
@@ -1471,6 +1471,54 @@ function cleanLesson(d) { // make sure every multiple-choice check really has it
   d.steps = (d.steps || []).filter((s) => s.title || s.explain);
   return d;
 }
+// ── after the AI writes something: tidy it, then a second AI pass fixes facts and over-complicated sentences ──
+const SLIDE_RX = /\s*\((?:see\s+)?(?:slides?|p\.|pages?)\s*[\d,\s–-]+\)/gi;
+const OPTION_RX = /\b(?:option|choice)\s+(?:one|two|three|four|[1-4]|[A-D])\b/i;
+const CAUSE_RX = /\b(ECG|EKG|electrocardiogram|P[- ]wave|QRS(?: complex)?|T[- ]wave)\b([^.]{0,60}?)\b(trigger|cause|control|drive|initiate|produce|start)(s|ed|ing)?\b/gi;
+function tidyText(s, bullets = false) {
+  let x = String(s || '').replace(SLIDE_RX, '');
+  if (bullets && !/\n\s*-\s/.test(x) && /[.:!?]\s+-\s+\S/.test(x)) x = x.replace(/\s+-\s+(?=[A-Z*(])/g, '\n- '); // bullets that came out on one line
+  return x.trim();
+}
+function tidyDeep(o, key = '') {
+  if (typeof o === 'string') return tidyText(o, key === 'explain');
+  if (Array.isArray(o)) return o.map((v) => tidyDeep(v, key));
+  if (o && typeof o === 'object') { for (const k of Object.keys(o)) o[k] = tidyDeep(o[k], k); return o; }
+  return o;
+}
+function textOf(o) { return typeof o === 'string' ? o : Array.isArray(o) ? o.map(textOf).join(' \n') : o && typeof o === 'object' ? Object.values(o).map(textOf).join(' \n') : ''; }
+function applyFixes(o, fixes) {
+  let n = 0; const good = (fixes || []).filter((f) => f.find && f.find.length >= 4 && f.find !== f.replace);
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') { for (const k of Object.keys(v)) v[k] = walk(v[k]); return v; }
+    if (typeof v !== 'string') return v;
+    let s = v; for (const f of good) if (s.includes(f.find)) { s = s.split(f.find).join(f.replace); n++; }
+    return s;
+  };
+  walk(o); return n;
+}
+// last resort if a cause-claim survives: an ECG wave shows electrical activity, it doesn't cause anything
+function fixCauseClaims(o) {
+  const swap = { trigger: 'show', cause: 'show', control: 'track', drive: 'show', initiate: 'mark', produce: 'show' };
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') { for (const k of Object.keys(v)) v[k] = walk(v[k]); return v; }
+    if (typeof v !== 'string') return v;
+    return v.replace(CAUSE_RX, (m, who, mid, verb, end) => {
+      const up = verb[0] === verb[0].toUpperCase(); const C = (x) => (up ? x[0].toUpperCase() + x.slice(1) : x);
+      if (verb.toLowerCase() === 'start') return `${who}${mid}${C(end === 'ed' ? 'came before' : end === 'ing' ? 'coming before' : end ? 'comes before' : 'come before')}`;
+      const w = swap[verb.toLowerCase()];
+      return `${who}${mid}${C(w)}${end === 'ed' ? 'ed' : end === 'ing' ? 'ing' : end ? 's' : ''}`;
+    });
+  };
+  walk(o);
+}
+async function factCheck(nb, obj) {
+  try { const r = await ai('lesson_review', { sources: aiSources(nb), lesson: obj }); return applyFixes(obj, r.fixes); }
+  catch { return 0; }
+}
+
 async function buildLesson(nb, i, { force = false } = {}) {
   const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
   (UI.lessonBusy ||= {})[key] = true;
@@ -1485,6 +1533,11 @@ async function buildLesson(nb, i, { force = false } = {}) {
         before: cards.slice(0, i).map((x) => x.title), after: cards.slice(i + 1).map((x) => x.title),
       }));
       if (!data.steps.length) throw new Error('The lesson came back empty. Try again.');
+      tidyDeep(data);
+      UI.lessonPhase = 'check';
+      if (location.hash.endsWith(`/lessons/${i}`)) { const p = document.querySelector('.lesson-phase'); if (p) p.textContent = 'Double-checking the facts and making it simpler…'; }
+      await factCheck(nb, data);
+      fixCauseClaims(data); tidyDeep(data); data = cleanLesson(data);
     } catch (e) {
       data = null;
       if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the lesson with AI (${e.message}). Showing a simpler one from your study cards.`, 'err');
@@ -1512,8 +1565,8 @@ function renderLesson(nb, el, i) {
     el.innerHTML = `<div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a><span class="small muted">Section ${i + 1} of ${nb.digest.cards.length}</span></div>
       <div class="card building lesson-card"><div style="font-size:2.6rem">${esc(c.emoji)}</div><h2 style="margin:6px 0">${esc(c.title)}</h2>
       <div class="spinner lg" style="margin:14px auto"></div>
-      <p class="muted" style="margin:0">Writing a beginner-friendly lesson for this section…</p>
-      <p class="small muted">Usually 10–30 seconds. It’s saved, so next time it opens instantly.</p></div>`;
+      <p class="muted lesson-phase" style="margin:0">Writing a beginner-friendly lesson for this section…</p>
+      <p class="small muted">Usually 15–40 seconds (it’s written, then fact-checked). It’s saved, so next time it opens instantly.</p></div>`;
     if (!UI.lessonBusy?.[key]) buildLesson(nb, i).then(() => { if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i); });
     return;
   }
@@ -1529,11 +1582,12 @@ function renderLesson(nb, el, i) {
   </div>`;
   UI.lessonDir = '';
 }
+const checkFinal = (r) => !!r?.verdict && (r.verdict === 'correct' || !!r.revealed || (r.tries || 1) >= 2);
 function lessonNextBtn(nb, i, L, s) {
   const ch = s.k === 'check' ? L.data.steps[s.j].check : null;
   if (s.k === 'intro') return `<button class="btn primary lg" data-act="lesson-next">Start lesson →</button>`;
   if (s.k === 'step') return `<button class="btn primary" data-act="lesson-next">${L.data.steps[s.j].check?.question ? 'Got it → quick check' : 'Next →'}</button>`;
-  if (s.k === 'check') return L.checks[s.j]?.verdict ? '<button class="btn primary" data-act="lesson-next">Next →</button>' : `<button class="btn ghost" data-act="lesson-next">Skip this question</button>`;
+  if (s.k === 'check') return checkFinal(L.checks[s.j]) ? '<button class="btn primary" data-act="lesson-next">Next →</button>' : `<button class="btn ghost" data-act="lesson-next">Skip this question</button>`;
   if (s.k === 'test') { const sc = testScore(L); const all = sc && sc.answered === sc.total && sc.para !== null; return all ? '<button class="btn primary" data-act="lesson-next">See my results →</button>' : `<a class="btn ghost" href="#/nb/${nb.id}/lessons">Finish later</a>`; }
   if (s.k === 'recall') return `<button class="btn ${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'primary' : 'ghost'}" data-act="lesson-next">${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'Next: section test →' : 'Skip to the test'}</button>`;
   return '';
@@ -1558,6 +1612,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
     const x = d.steps[s.j]; const help = (L.help || {})[s.j] || []; const busy = UI.lessonHelpBusy === `${nb.id}:${i}:${s.j}`;
     const lab = { simpler: '🧒 Simpler', example: '💡 Another example', question: '❓ You asked' };
     return `<div class="lesson-kicker">Step ${s.j + 1} of ${steps}</div><h2>${esc(x.title)}</h2>
+      ${x.plain ? `<div class="lesson-plain"><span>🗣️ In plain words</span>${esc(x.plain)}</div>` : ''}
       <div class="lesson-text">${md(x.explain)}</div>
       ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
       <div class="paper-task"><span class="paper-ico">✍️</span><div>${esc(paperPrompt(x, s.j))}</div></div>
@@ -1572,28 +1627,39 @@ function lessonStageHTML(nb, i, L, s, steps) {
         <div class="row"><button class="btn primary sm" data-act="lesson-help" data-mode="question">Ask</button><button class="btn ghost sm" data-act="lesson-ask-cancel">Cancel</button></div></div>` : ''}`;
   }
   if (s.k === 'check') {
-    const x = d.steps[s.j]; const ch = x.check; const raw = (L.checks || {})[s.j]; const r = raw?.verdict ? raw : null; const grading = UI.lessonGrading === `${nb.id}:${i}:${s.j}`;
+    // First wrong answer: no answer shown, just a hint and a second try. The answer appears after the second try,
+    // or when you tap "Show me the answer".
+    const x = d.steps[s.j]; const ch = x.check; const raw = (L.checks || {})[s.j]; const grading = UI.lessonGrading === `${nb.id}:${i}:${s.j}`;
+    const fin = checkFinal(raw); const hinting = !!raw?.verdict && !fin;
     const ckey = `${nb.id}:${i}:${s.j}`; const conf = (UI.lessonConf ||= {})[ckey];
-    const confRow = r ? '' : `<div class="conf-row"><span class="small muted">How sure are you?</span>${[['guess', 'Guessing'], ['think', 'Think so'], ['sure', 'Sure']].map(([k, l]) => `<button class="chip-btn ${conf === k ? 'on' : ''}" data-act="lesson-conf" data-c="${k}">${l}</button>`).join('')}</div>`;
+    const confRow = raw?.verdict ? '' : `<div class="conf-row"><span class="small muted">How sure are you?</span>${[['guess', 'Guessing'], ['think', 'Think so'], ['sure', 'Sure']].map(([k, l]) => `<button class="chip-btn ${conf === k ? 'on' : ''}" data-act="lesson-conf" data-c="${k}">${l}</button>`).join('')}</div>`;
+    const wrong = raw?.wrong || [];
     let body;
     if (ch.type === 'mcq') {
       body = `<div class="lesson-opts">${ch.options.map((o, k) => {
-        const cls = r ? (o === ch.answer ? 'right' : r.pick === k ? 'wrong' : 'dim') : '';
-        return `<button class="opt ${cls}" data-act="lesson-mcq" data-o="${k}" ${r ? 'disabled' : ''}><span class="opt-l">${'ABCD'[k] || k + 1}</span><span>${esc(o)}</span></button>`;
+        const cls = fin ? (o === ch.answer ? 'right' : wrong.includes(k) ? 'wrong' : 'dim') : wrong.includes(k) ? 'wrong crossed' : '';
+        const off = fin || wrong.includes(k);
+        return `<button class="opt ${cls}" data-act="lesson-mcq" data-o="${k}" ${off ? 'disabled' : ''}><span class="opt-l">${'ABCD'[k] || k + 1}</span><span>${esc(o)}</span></button>`;
       }).join('')}</div>`;
+    } else if (fin) {
+      body = `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(raw.text)}</div></div>`;
     } else {
-      body = r ? `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(r.text)}</div></div>`
-        : `<textarea id="lessonA" rows="3" placeholder="Answer in your own words…" ${grading ? 'disabled' : ''}>${grading ? esc(UI.lessonDraft || '') : ''}</textarea>
-          <div class="row"><button class="btn primary" data-act="lesson-short" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : 'Check my answer'}</button></div>`;
+      const draft = grading ? UI.lessonDraft || '' : hinting ? raw.text || '' : '';
+      body = `<textarea id="lessonA" rows="3" placeholder="Answer in your own words…" ${grading ? 'disabled' : ''}>${esc(draft)}</textarea>
+        <div class="row"><button class="btn primary" data-act="lesson-short" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : hinting ? 'Check again' : 'Check my answer'}</button></div>`;
     }
-    const v = r?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
-    return `<div class="lesson-kicker">Quick check · step ${s.j + 1} of ${steps} · ${ch.type === 'mcq' ? 'multiple choice' : 'short answer'}${raw?.tries && !r ? ' · second try' : ''}</div>
-      <h2 class="lesson-q">${esc(ch.question)}</h2>${confRow}${body}
-      ${r ? `<div class="verdict ${v}"><h3>${head}</h3>${r.feedback ? `<div>${esc(r.feedback)}</div>` : ''}
-        ${ch.type === 'short' ? `<div class="small" style="margin-top:6px"><b>Key answer:</b> ${esc(ch.answer)}</div>` : ''}
+    const v = raw?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
+    const hintBox = hinting ? `<div class="verdict ${v} hint-box"><h3>${v === 'partial' ? '◐ Almost there' : '✗ Not quite'}</h3>
+        <div>💡 <b>Hint:</b> ${esc(ch.hint || `Reread step ${s.j + 1} and look at the bold words.`)}</div>
+        <div class="small muted" style="margin-top:4px">${ch.type === 'mcq' ? 'Pick another option.' : 'Change your answer and check again.'}</div>
+        <div class="row" style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Reread the step</button><button class="btn sm ghost" data-act="lesson-reveal">Show me the answer</button></div></div>` : '';
+    const finalBox = fin ? `<div class="verdict ${v}"><h3>${raw.revealed && v !== 'correct' ? '👀 Here’s the answer' : head}${raw.tries > 1 && v === 'correct' ? ' on the second try' : ''}</h3>
+        ${raw.feedback && !raw.revealed ? `<div>${esc(raw.feedback)}</div>` : ''}
+        ${ch.type === 'short' || raw.revealed ? `<div class="small" style="margin-top:6px"><b>Answer:</b> ${esc(ch.answer)}</div>` : ''}
         ${ch.explanation ? `<div class="small" style="margin-top:6px">${esc(ch.explanation)}</div>` : ''}
-        ${r.conf === 'sure' && v !== 'correct' ? '<div class="small" style="margin-top:6px">⚠️ You were sure, so this one comes back in Recall today.</div>' : ''}
-        ${v !== 'correct' ? `<div class="row" style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Review the step</button>${(r.tries || 1) < 2 ? '<button class="btn sm" data-act="lesson-retry">↻ Try again</button>' : ''}</div>` : ''}</div>` : ''}`;
+        ${raw.conf === 'sure' && (raw.first ?? raw.ok) < 1 ? '<div class="small" style="margin-top:6px">⚠️ You were sure at first, so this one comes back in Recall today.</div>' : (raw.first ?? raw.ok) < 1 ? '<div class="small muted" style="margin-top:6px">🧠 This one comes back in Recall tomorrow.</div>' : ''}</div>` : '';
+    return `<div class="lesson-kicker">Quick check · step ${s.j + 1} of ${steps} · ${ch.type === 'mcq' ? 'multiple choice' : 'short answer'}${hinting ? ' · second try' : ''}</div>
+      <h2 class="lesson-q">${esc(ch.question)}</h2>${confRow}${body}${hintBox}${finalBox}`;
   }
   if (s.k === 'recall') {
     const stR = UI.cardRecall[`${nb.id}:${i}`];
@@ -1653,13 +1719,20 @@ async function buildTest(nb, i) {
         used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean),
         concepts: nb.digest.concepts.map((x) => ({ id: x.id, name: x.name })),
         earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 2).map((x) => ({ title: x.title, points: x.points })) });
-      const used = (L.data.steps || []).map((s) => s.check?.question).filter(Boolean);
-      let mcq = (r.mcq || []).map(shuffleOpts).filter(Boolean);
-      // drop test questions that just re-ask a quick check (keep at least 3)
-      const fresh = mcq.filter((q) => !used.some((u) => coverage(q.question, u) >= 0.6 && coverage(u, q.question) >= 0.6));
-      if (fresh.length >= 3) mcq = fresh;
+      const used = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer }));
+      const all = (r.mcq || []).map(shuffleOpts).filter(Boolean);
+      // a test question repeats a quick check if the wording is close, or the answer is the same and the topic similar
+      const same = (q, u) => { const qq = Math.max(coverage(q.question, u.q), coverage(u.q, q.question)); const aa = Math.min(coverage(q.answer, u.a), coverage(u.a, q.answer)); return qq >= 0.5 || (aa >= 0.6 && qq >= 0.3); };
+      const picked = [];
+      for (const q of all) if (!used.some((u) => same(q, u)) && !picked.some((p) => same(q, { q: p.question, a: p.answer }))) picked.push(q);
+      const review = picked.filter((q) => q.review).slice(0, 1);
+      let mcq = [...picked.filter((q) => !q.review).slice(0, review.length ? 3 : 4), ...review];
+      if (mcq.length < 3) mcq = [...mcq, ...all.filter((q) => !mcq.includes(q))].slice(0, 4); // never fewer than 3–4 questions
       if (!mcq.length || !r.paragraph?.prompt) throw new Error('The test came back incomplete. Try again.');
-      t = { mcq, paragraph: r.paragraph };
+      t = tidyDeep({ mcq, paragraph: r.paragraph });
+      CAUSE_RX.lastIndex = 0;
+      if (CAUSE_RX.test(textOf(t)) || OPTION_RX.test(textOf(t))) { await factCheck(nb, t); fixCauseClaims(t); t.mcq = t.mcq.map(shuffleOpts).filter(Boolean); }
+      CAUSE_RX.lastIndex = 0;
     } catch (e) { if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the section test with AI (${e.message}). Using a shorter one.`, 'err'); }
   }
   L.test = { ...(t || localTest(nb, i, L)), answers: {}, para: null };
@@ -1760,8 +1833,8 @@ async function lessonMove(delta) {
     const sc = testScore(L);
     if (!sc || sc.answered < sc.total || sc.para === null) { L.pos = st.findIndex((x) => x.k === 'test'); toast('Finish the section test to complete this section.'); save(nb); lessonShow(nb, i); return; }
     L.done = true; nb.progress.learn = true;
-    const added = lessonToRecall(nb, i, L);
     save(nb); lessonShow(nb, i); confetti(); await gainXP(15, 'section learned');
+    const added = await lessonToRecall(nb, i, L); await save(nb);
     if (added) setTimeout(() => toast(`🧠 ${added} question${added > 1 ? 's' : ''} added to Recall, so they come back for spaced review`), 1200);
     return;
   }
@@ -1769,21 +1842,32 @@ async function lessonMove(delta) {
 }
 // Spacing: what you missed comes back in Recall tomorrow (today if you were sure but wrong); two test questions you
 // got right come back in 3 days, so the whole section gets re-quizzed later.
-function lessonToRecall(nb, i, L) {
+async function lessonToRecall(nb, i, L) {
   const day = 86400e3; const items = [];
   (L.data.steps || []).forEach((s, j) => { const ch = s.check; if (!ch?.question) return; const r = L.checks?.[j]; const first = r ? (r.first ?? r.ok) : 0; items.push({ q: ch.question, a: ch.answer, miss: first < 1, sure: r?.conf === 'sure', item: ch }); });
   (L.test?.mcq || []).forEach((q, k) => items.push({ q: q.question, a: q.answer, miss: L.test.answers[k] !== q.answer, test: true, item: q }));
-  const have = new Set(nb.cards.map((c) => norm(c.question))); let keep = 2; let added = 0;
+  const have = new Set(nb.cards.map((c) => norm(c.question))); let keep = 2;
+  const chosen = [];
   for (const it of items) {
     if (have.has(norm(it.q))) continue;
-    let due;
-    if (it.miss) due = Date.now() + (it.sure ? 0 : day);
-    else if (it.test && keep > 0) { keep--; due = Date.now() + 3 * day; }
+    if (it.miss) it.due = Date.now() + (it.sure ? 0 : day);
+    else if (it.test && keep > 0) { keep--; it.due = Date.now() + 3 * day; }
     else continue;
-    nb.cards.push({ id: uid(), question: it.q, answer: it.a, concept_id: itemConcept(nb, i, it.item), kind: 'explain', from: 'lesson', srs: { ...newSrs(), due }, history: [] });
-    have.add(norm(it.q)); added++;
+    chosen.push(it); have.add(norm(it.q));
   }
-  return added;
+  // Recall shows no answer choices, so multiple-choice questions are rewritten as open questions
+  const mcqs = chosen.filter((it) => (it.item?.options || []).length > 1);
+  if (mcqs.length) {
+    let open = null;
+    try { if (S.status.claude) { const r = await ai('open_questions', { items: mcqs.map((it) => ({ question: it.q, options: it.item.options, answer: it.a })) }); if (r.items?.length === mcqs.length) open = r.items; } }
+    catch { /* keep the fallback below */ }
+    mcqs.forEach((it, k) => {
+      if (open?.[k]?.question) { it.q = open[k].question; it.a = open[k].answer || it.a; }
+      else it.q = `${it.q}\n\nChoices: ${it.item.options.join(' · ')}`;
+    });
+  }
+  for (const it of chosen) nb.cards.push({ id: uid(), question: it.q, answer: it.a, concept_id: itemConcept(nb, i, it.item), kind: 'explain', from: 'lesson', srs: { ...newSrs(), due: it.due }, history: [] });
+  return chosen.length;
 }
 ACT['lesson-next'] = () => lessonMove(1);
 ACT['lesson-back'] = () => {
@@ -1823,25 +1907,24 @@ function itemConcept(nb, i, item) {
 function lessonRecord(nb, i, item, ok) { const cid = itemConcept(nb, i, item); if (cid) record(nb, cid, ok); }
 ACT['lesson-mcq'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
-  const prev = L.checks[s.j]; if (s.k !== 'check' || prev?.verdict) return;
-  const ch = L.data.steps[s.j].check; const k = +el.dataset.o; const ok = ch.options[k] === ch.answer;
-  const conf = UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '';
-  L.checks[s.j] = { pick: k, ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: ok ? '' : `The answer is: ${ch.answer}`, conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : (ok ? 1 : 0) };
+  const prev = L.checks[s.j]; if (s.k !== 'check' || checkFinal(prev)) return;
+  const ch = L.data.steps[s.j].check; const k = +el.dataset.o; if ((prev?.wrong || []).includes(k)) return;
+  const ok = ch.options[k] === ch.answer;
+  const conf = prev?.conf ?? (UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '');
+  L.checks[s.j] = { pick: k, wrong: ok ? prev?.wrong || [] : [...(prev?.wrong || []), k], ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: '', conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : (ok ? 1 : 0) };
   if (!prev) lessonRecord(nb, i, ch, ok ? 1 : 0);
   await save(nb); lessonShow(nb, i);
   if (ok) gainXP(prev ? 2 : 4, prev ? 'got it on the retry' : 'quick check');
 };
 ACT['lesson-conf'] = (el) => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; (UI.lessonConf ||= {})[`${nb.id}:${i}:${s.j}`] = el.dataset.c; lessonShow(nb, i); };
-ACT['lesson-retry'] = async () => {
+ACT['lesson-reveal'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; const r = L.checks[s.j];
-  if (s.k !== 'check' || !r || (r.tries || 1) >= 2) return;
-  L.checks[s.j] = { tries: r.tries || 1, first: r.first ?? r.ok, conf: r.conf };
-  const ch = L.data.steps[s.j].check; if (ch.type === 'mcq') { const o = ch.options.slice(); for (let k = o.length - 1; k > 0; k--) { const q = Math.floor(Math.random() * (k + 1)); [o[k], o[q]] = [o[q], o[k]]; } ch.options = o; }
-  await save(nb); lessonShow(nb, i);
+  if (s.k !== 'check' || !r?.verdict) return;
+  r.revealed = true; await save(nb); lessonShow(nb, i);
 };
 ACT['lesson-short'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
-  const prev = L.checks[s.j]; if (s.k !== 'check' || prev?.verdict) return;
+  const prev = L.checks[s.j]; if (s.k !== 'check' || checkFinal(prev)) return;
   const ch = L.data.steps[s.j].check; const text = ($('#lessonA')?.value || '').trim();
   if (!text) { toast('Write an answer first, even a guess. Guessing helps you remember.'); $('#lessonA')?.focus(); return; }
   let r = quickGrade(text, ch.answer);
@@ -1853,7 +1936,7 @@ ACT['lesson-short'] = async () => {
   }
   if (!r || !r.verdict) { const cv = coverage(text, ch.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare your answer with the key answer below.' }; }
   const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
-  const conf = UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '';
+  const conf = prev?.conf ?? (UI.lessonConf?.[`${nb.id}:${i}:${s.j}`] || '');
   L.checks[s.j] = { text, ok, verdict: r.verdict, feedback: r.feedback || '', conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : ok };
   if (!prev) lessonRecord(nb, i, ch, ok);
   await save(nb);
