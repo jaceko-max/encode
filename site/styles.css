@@ -738,3 +738,133 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .lb-scroll { max-height: 312px; overflow-y: auto; overscroll-behavior: contain; position: relative; padding-right: 4px; scrollbar-width: thin;
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); padding-bottom: 14px; }
 @media (max-width: 520px) { .lb-scroll { max-height: 290px; } }
+
+/* ═════════════ focus timer (pomodoro) ═════════════ */
+.pm-ring .pm-track { stroke: color-mix(in srgb, var(--text) 10%, transparent); }
+.pm-ring .pm-arc { stroke: #4f7dff; transition: stroke-dashoffset .9s linear, stroke .3s; }
+.mode-short .pm-arc, .mode-long .pm-arc { stroke: #3dd6f5; }
+.pm-dots { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.pm-dots i { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.pm-dots i.f { background: #3dd6f5; box-shadow: 0 0 6px rgba(61, 214, 245, .6); }
+.pm-home { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.pm-home-ring, .pm-screen-ring { position: relative; flex: none; display: grid; place-items: center; }
+.pm-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.pm-center b { font: 700 2.1rem/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.pm-center span { font-size: .8rem; color: var(--muted); margin-top: 6px; }
+.pm-screen-ring .pm-center b { font-size: 3rem; }
+.pm-home-side { flex: 1; min-width: 240px; display: grid; gap: 12px; }
+.pm-modes { justify-self: start; }
+.pm-home .field select { max-width: 360px; }
+.pm-set { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.pm-set input { width: 100%; }
+
+.pm-pill { position: fixed; z-index: 45; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid #4f7dff; color: var(--text);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .35); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: left .22s ease, top .22s ease; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.pm-pill[hidden] { display: none; }
+.pm-pill.mode-short, .pm-pill.mode-long { border-color: #3dd6f5; }
+.pm-pill.paused { border-style: dashed; }
+.pm-pill.drag { cursor: grabbing; transition: none; box-shadow: 0 14px 34px rgba(0, 0, 0, .5); }
+.pm-pill:focus-visible { outline: 2px solid #3dd6f5; outline-offset: 2px; }
+.pm-pill b { font: 700 1rem ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.pm-lab { font-size: .75rem; color: var(--muted); }
+.pm-grip { width: 6px; height: 16px; background: radial-gradient(circle, var(--muted) 1.1px, transparent 1.4px) 0 0 / 3px 4px; opacity: .7; }
+.pm-pp { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.pm-pp:hover { border-color: #4f7dff; }
+@media (pointer: coarse) { .pm-pp { width: 40px; height: 40px; } }
+
+html.pm-open { overflow: hidden; }
+.pm-screen { position: fixed; inset: 0; z-index: 58; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  background: radial-gradient(60% 50% at 50% 40%, rgba(79, 125, 255, .16), transparent 70%), var(--bg); overflow-y: auto; overscroll-behavior: contain; animation: pm-in .25s ease-out; }
+.pm-screen.mode-short, .pm-screen.mode-long { background: radial-gradient(60% 50% at 50% 40%, rgba(61, 214, 245, .14), transparent 70%), var(--bg); }
+@keyframes pm-in { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: none; } }
+.pm-screen-in { width: min(460px, 100%); display: grid; justify-items: center; gap: 14px; text-align: center; }
+.pm-screen-in h1 { margin: 0; font-size: 2rem; }
+.pm-screen-in p { margin: 0; }
+.pm-big-ico { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; font-size: 2rem; font-weight: 700; color: #04121f; background: var(--grad, linear-gradient(135deg, #4f7dff, #3dd6f5)); box-shadow: 0 0 28px rgba(61, 214, 245, .45); }
+.pm-xp { color: #3dd6f5; font-weight: 700; }
+.pm-kicker { font: 700 .95rem "Chakra Petch", var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.pm-tip { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: .92rem; }
+.pm-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+@media (prefers-reduced-motion: reduce) { .pm-pill, .pm-ring .pm-arc, .pm-screen { transition: none; animation: none; } }
+@media (max-width: 520px) { .pm-home { justify-content: center; } .pm-home-side { min-width: 0; width: 100%; } .pm-screen-in h1 { font-size: 1.7rem; } }
+@media (max-width: 520px) { .pm-lab { display: none; } .pm-pill { gap: 6px; } }
+
+/* ═════════════ Learn: guided lessons ═════════════ */
+.lesson-hero { display: grid; gap: 12px; }
+.lesson-hero h2 { margin: 0; }
+.lesson-sum { display: flex; gap: 12px; align-items: center; }
+.lesson-sum .meter { flex: 1; max-width: 360px; }
+.lesson-path { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; counter-reset: none; }
+.lesson-tile { position: relative; display: grid; grid-template-rows: 130px auto; padding: 0; overflow: hidden; text-align: left; cursor: pointer; color: inherit; font: inherit;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.lesson-tile:hover { transform: translateY(-3px); border-color: color-mix(in srgb, #4f7dff 60%, var(--border)); box-shadow: 0 10px 30px rgba(79, 125, 255, .18); }
+.lesson-tile:focus-visible { outline: 2px solid #3dd6f5; outline-offset: 2px; }
+.lt-pic { display: grid; place-items: center; background: #fff; overflow: hidden; border-bottom: 1px solid var(--border); }
+.lt-pic img { width: 100%; height: 100%; object-fit: cover; object-position: center top; display: block; }
+.lt-pic:has(.lt-emoji) { background: linear-gradient(135deg, color-mix(in srgb, #4f7dff 22%, var(--surface)), color-mix(in srgb, #3dd6f5 14%, var(--surface))); }
+.lt-emoji { font-size: 3rem; }
+.lt-num { position: absolute; top: 10px; left: 10px; z-index: 1; min-width: 30px; height: 30px; padding: 0 8px; border-radius: 999px; display: grid; place-items: center;
+  font: 700 .9rem "Chakra Petch", var(--font); color: #fff; background: rgba(8, 12, 24, .82); border: 1px solid rgba(255, 255, 255, .25); }
+.lesson-tile.done .lt-num { background: var(--good); color: #04120a; border-color: transparent; }
+.lt-body { display: grid; gap: 6px; padding: 12px 14px 14px; }
+.lt-body b { line-height: 1.3; }
+.lt-meter { height: 5px; border-radius: 99px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; }
+.lt-meter i { display: block; height: 100%; background: var(--grad, linear-gradient(90deg, #4f7dff, #3dd6f5)); border-radius: inherit; }
+.lt-next { position: absolute; top: 10px; right: 10px; font-size: .72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; color: #04121f; background: #3dd6f5; }
+
+.lesson-zoom { position: fixed; z-index: 57; background: var(--surface); border: 1px solid color-mix(in srgb, #4f7dff 50%, var(--border)); overflow: hidden; pointer-events: none;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .45); }
+.lesson-zoom img { width: 100%; height: 100%; object-fit: cover; opacity: .35; filter: blur(2px); }
+
+.lesson-wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 12px; }
+.lesson-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.lesson-dots { display: flex; gap: 5px; }
+.lesson-dots i { flex: 1; height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--text) 10%, transparent); transition: background .3s; }
+.lesson-dots i.f { background: color-mix(in srgb, #3dd6f5 70%, transparent); }
+.lesson-dots i.on { background: var(--grad, linear-gradient(90deg, #4f7dff, #3dd6f5)); box-shadow: 0 0 10px rgba(61, 214, 245, .5); }
+.lesson-card { display: grid; gap: 14px; padding: 24px; }
+.lesson-card h2 { margin: 0; font-size: 1.55rem; line-height: 1.25; }
+.lesson-card textarea { width: 100%; }
+.lesson-emoji { font-size: 2.8rem; line-height: 1; }
+.lesson-kicker { font: 700 .8rem "Chakra Petch", var(--font); letter-spacing: .07em; text-transform: uppercase; color: #3dd6f5; }
+.lesson-text { font-size: 1.08rem; line-height: 1.7; }
+.lesson-text p { margin: 0 0 .7em; } .lesson-text p:last-child { margin: 0; }
+.lesson-text strong { color: #a5f3fc; }
+.lesson-box { border-radius: 14px; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border); display: grid; gap: 6px; }
+.lesson-box ul, .lesson-box ol { margin: 0; padding-left: 20px; } .lesson-box li { margin: 3px 0; }
+.lesson-box p { margin: 0 0 .5em; } .lesson-box p:last-child { margin: 0; }
+.lesson-box.ex { background: color-mix(in srgb, #4f7dff 12%, var(--surface-2)); border-color: color-mix(in srgb, #4f7dff 35%, var(--border)); }
+.lesson-box.help { background: color-mix(in srgb, #3dd6f5 9%, var(--surface-2)); border-color: color-mix(in srgb, #3dd6f5 35%, var(--border)); animation: pop .25s ease-out; }
+.lesson-box.plain { background: transparent; }
+.lesson-outline li { color: var(--muted); } .lesson-outline li::marker { color: #3dd6f5; font-weight: 700; }
+.lesson-terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin: 0; }
+.lesson-terms div { border: 1px dashed var(--border); border-radius: 12px; padding: 8px 12px; }
+.lesson-terms dt { font-weight: 700; color: #a5f3fc; } .lesson-terms dd { margin: 2px 0 0; font-size: .9rem; color: var(--muted); }
+.lesson-help-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding-top: 4px; border-top: 1px solid var(--border); }
+.lesson-ask { display: grid; gap: 8px; }
+.lesson-q { font-size: 1.3rem !important; }
+.lesson-opts { display: grid; gap: 2px; }
+.lesson-opts .opt { width: 100%; text-align: left; font: inherit; color: inherit; align-items: center; }
+.lesson-opts .opt:disabled { cursor: default; }
+.lesson-opts .opt.dim { opacity: .55; }
+.opt-l { flex: none; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-weight: 700; font-size: .85rem; background: var(--surface-2); border: 1px solid var(--border); }
+.opt.right .opt-l { background: var(--good); color: #04120a; border-color: transparent; }
+.opt.wrong .opt-l { background: var(--bad); color: #fff; border-color: transparent; }
+.lesson-mine { border-left: 3px solid var(--border); padding-left: 12px; }
+.lesson-hits { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.lesson-hits li.hit { color: var(--good); } .lesson-hits li.miss { color: var(--bad); }
+.lesson-nav { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.lesson-done { display: grid; justify-items: center; gap: 8px; text-align: center; }
+.lesson-done-row { justify-content: center; }
+.stage-in { animation: stage-in .32s cubic-bezier(.2, .8, .2, 1); }
+.stage-back { animation: stage-back .32s cubic-bezier(.2, .8, .2, 1); }
+@keyframes stage-in { from { opacity: 0; transform: translateX(26px); } to { opacity: 1; transform: none; } }
+@keyframes stage-back { from { opacity: 0; transform: translateX(-26px); } to { opacity: 1; transform: none; } }
+@media (max-width: 520px) {
+  .lesson-card { padding: 18px 16px; } .lesson-card h2 { font-size: 1.3rem; } .lesson-text { font-size: 1rem; }
+  .lesson-path { grid-template-columns: 1fr; } .lesson-tile { grid-template-rows: 110px auto; }
+  .lesson-nav .btn { flex: 1; } .lesson-nav > span:empty { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .stage-in, .stage-back, .lesson-box.help { animation: none; } .lesson-tile { transition: none; } }

@@ -240,9 +240,46 @@
     exam: obj({ questions: arr(obj({ type: { type: 'string', enum: ['mcq', 'short'] }, question: S, options: SA, answer: S, explanation: S, concept_id: S })) }),
     svg: obj({ svg: S, caption: S }),
     transcribe: obj({ title: S, text: S }),
+    lesson: obj({
+      intro: S, prior: SA,
+      steps: arr(obj({ title: S, explain: S, example: S, terms: arr(obj({ term: S, meaning: S })),
+        check: obj({ type: { type: 'string', enum: ['mcq', 'short'] }, question: S, options: SA, answer: S, explanation: S }) })),
+      summary: SA, mnemonic: S,
+    }),
+    help: obj({ answer: S }),
     videoPlan: obj({ searches: arr(obj({ query: S, concept_id: S, level: S, why: S, watch_for: SA })) }),
   };
   const TASK = {
+    lesson: `Teach ONE section of this lecture to a student who is seeing the topic for the FIRST time. You get the section
+(title, key points, analogy, related concepts) and the full lecture material. Write a short guided lesson that builds
+understanding bit by bit:
+- intro: 2–3 friendly sentences: what this section is about and why it matters (clinical or real-life when it fits).
+  Explain any jargon you use.
+- prior: 0–3 quick refreshers of background the student needs first (≤30 words each, e.g. what "ventral" means).
+  [] if nothing is needed.
+- steps: 3–6 small steps that build on each other (simple → complex) and together cover every key point of the section.
+  Each step:
+  title: ≤6 words.
+  explain: 60–120 words, plain language, short sentences. Define every new term the first time it appears and
+    **bold** the 1–3 key terms. A short bulleted list is fine when it helps.
+  example: one concrete example, analogy or "picture this" (≤45 words), different from the section analogy.
+  terms: 0–3 key terms from this step with meanings of ≤15 words.
+  check: one question testing understanding of THIS step (not trivia). Alternate types so the student does both:
+    step 1 "mcq", step 2 "short", step 3 "mcq", and so on.
+    mcq: exactly 4 options with plausible distractors based on common confusions, in random order; answer = the exact
+      text of the correct option.
+    short: answerable in one or two sentences; options = []; answer = the essential points, ≤35 words.
+    explanation: why the answer is right (≤40 words); for mcq also why the most tempting wrong option is wrong
+      (name that option by its wording, never "option 1" or "B").
+- summary: 3–5 one-line takeaways. mnemonic: one vivid memory hook for the whole section.
+Only teach what the material supports; where it's thin, keep it simple rather than inventing details. Don't re-teach
+earlier sections or jump ahead to later ones. Don't cite slide or page numbers.`,
+    help: `A student is partway through one step of a guided lesson and tapped for help. Reply straight to them in 40–120
+words: plain language, warm, no preamble, no "Great question". Markdown is fine (bold, short lists).
+mode "simpler": re-explain the step as if to a smart 12-year-old, with a fresh everyday comparison.
+mode "example": give a different concrete example (clinical or everyday) that shows the idea in action.
+mode "question": answer their question using the lecture material; if it goes beyond the material, answer briefly
+from general knowledge and say so. Don't repeat earlier help word for word.`,
     digest: `Build a complete study kit from the lecture material. Requirements:
 - title: a short name for this lecture. overview: 2–3 sentences on the big picture.
 - concepts: the 8–20 most testable ideas, ids "c1", "c2", … in lecture order. definition: plain language, ≤35 words.
@@ -333,6 +370,20 @@ For each topic, write the YouTube search that will surface a great teaching vide
       }
       parts.push({ text: (imgs.length ? `${imgs.length} slide pictures are attached above. ` : 'No slide pictures are attached. ') + 'Build the study kit now.' });
       return callJSON({ sources: p.sources, task: TASK.digest, parts, schema: SCHEMA.digest, thinking: 2048, maxTokens: 65536, wait: 240000 });
+    },
+    lesson(p) {
+      const msg = [`Section ${p.index} of ${p.count}: ${p.title || ''}`, 'Key points:', ...(p.points || []).map((x) => `- ${x}`),
+        p.analogy ? `Section analogy: ${p.analogy}` : '', (p.concepts || []).length ? 'Related concepts:' : '',
+        ...(p.concepts || []).map((c) => `- ${c.name}: ${c.definition}`),
+        (p.before || []).length ? `Earlier sections (already taught): ${p.before.join('; ')}` : 'This is the first section.',
+        (p.after || []).length ? `Later sections (don't cover yet): ${p.after.join('; ')}` : 'This is the last section.',
+        'Write the lesson for this section now.'].filter(Boolean).join('\n');
+      return callJSON({ sources: p.sources, task: TASK.lesson, parts: msg, schema: SCHEMA.lesson, thinking: 1024, maxTokens: 12000, wait: 120000 });
+    },
+    lesson_help(p) {
+      const earlier = (p.earlier || []).map((h) => `- (${h.mode}) ${h.a}`).join('\n');
+      const msg = `Lesson section: ${p.title || ''}\nStep: ${p.step_title || ''}\nWhat the step taught:\n${p.explain || ''}\n${p.example ? `Its example: ${p.example}\n` : ''}Mode: ${p.mode}\n${p.question ? `Student's question: ${p.question}\n` : ''}${earlier ? `Help already given on this step:\n${earlier}\n` : ''}`;
+      return callJSON({ sources: p.mode === 'question' ? p.sources : null, task: TASK.help, parts: msg, schema: SCHEMA.help, thinking: 0, maxTokens: 1200, tier: 'lite' });
     },
     grade(p) {
       const msg = `Concept: ${p.concept || ''}\nQuestion: ${p.question || ''}\nModel answer: ${p.answer || ''}\nStudent answer: ${p.response || '(blank)'}`;

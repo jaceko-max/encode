@@ -778,6 +778,7 @@ function renderHome() {
       <div class="week" aria-label="This week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''} ${d.future ? 'future' : ''}" title="${d.full}${d.future ? '' : `: ${S.meta.days[d.k] || 0} XP`}"><i></i>${d.l}</div>`).join('')}</div>
     </div>
   </section>
+  ${nbs.length ? `<section class="section" id="pomoHome">${pomoHomeHTML()}</section>` : ''}
 
   ${(() => {
     const courses = [...new Set(nbs.filter((n) => n.digest).map((n) => n.course || 'Other'))].map((c) => ({ c, list: courseNotebooks(c) })).filter((x) => x.list.length > 1);
@@ -792,6 +793,7 @@ function renderHome() {
       <div class="card empty"><div class="big">📚</div><h3>No notebooks yet</h3>
       <p class="muted" style="margin:0">One notebook per lecture or topic. Tap <b>＋ New notebook</b> above to start, or try the sample first.</p></div>`}
   </section>
+  ${nbs.length ? '' : `<section class="section" id="pomoHome">${pomoHomeHTML()}</section>`}
   ${S.status.public ? '<section class="section" id="homeLb"></section>' : ''}
   ${nbs.some((n) => n.digest) ? donateCard() : ''}
 
@@ -844,6 +846,7 @@ const ICON_PATHS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   sources: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
   pretest: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  lessons: '<path d="M22 9 12 4 2 9l10 5 10-5z"/><path d="M6 11.5V16c3 2.2 9 2.2 12 0v-4.5M22 9v5"/>',
   learn: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   videos: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
   recall: '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
@@ -871,7 +874,7 @@ function confetti() {
 
 // ═════════════════════════ NOTEBOOK SHELL ═════════════════════════
 const TABS = [
-  ['sources', '📄 Sources'], ['pretest', '🤔 Pretest'], ['learn', '🖼️ Learn'], ['videos', '🎬 Videos'], ['recall', '🧠 Recall'],
+  ['sources', '📄 Sources'], ['pretest', '🤔 Pretest'], ['lessons', '🎓 Learn'], ['learn', '🖼️ Revise'], ['videos', '🎬 Videos'], ['recall', '🧠 Recall'],
   ['teach', '🗣️ Teach back'], ['tutor', '💬 Tutor'], ['exam', '📝 Exam'], ['progress', '📈 Progress'],
 ];
 function pathSteps(nb) {
@@ -879,7 +882,7 @@ function pathSteps(nb) {
     { tab: 'sources', label: 'Add material', done: nb.sources.length > 0 },
     { tab: 'sources', label: 'Build kit', done: !!nb.digest },
     { tab: 'pretest', label: 'Pretest', done: nb.pretest.done },
-    { tab: 'learn', label: 'Learn visually', done: nb.progress.learn },
+    { tab: 'lessons', label: 'Learn step by step', done: nb.progress.learn || lessonsDone(nb) },
     { tab: 'recall', label: 'Recall', done: nb.progress.reviews > 0 && dueCards(nb).length === 0 },
     { tab: 'teach', label: 'Teach back', done: Object.keys(nb.feynman).length > 0 },
     { tab: 'exam', label: 'Practice exam', done: nb.exams.length > 0 },
@@ -887,7 +890,7 @@ function pathSteps(nb) {
 }
 function nextStep(nb) { return pathSteps(nb).find((s) => !s.done) || { tab: dueCards(nb).length ? 'recall' : 'exam', label: dueCards(nb).length ? 'Review due cards' : 'Another practice exam' }; }
 
-const KIT_TABS = ['pretest', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
+const KIT_TABS = ['pretest', 'lessons', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
 function renderNotebook(nb, tab, arg) {
   if (tab === 'learn' && nb.digest && !nb.progress.learn) { nb.progress.learn = true; save(nb); }
   const steps = pathSteps(nb); const next = nextStep(nb); const due = dueCards(nb).length;
@@ -914,7 +917,7 @@ function renderNotebook(nb, tab, arg) {
   const needsKit = KIT_TABS.includes(tab) && !nb.digest;
   const el = $('#tab');
   if (needsKit) return renderNeedKit(nb, el);
-  ({ sources: renderSources, pretest: renderPretest, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress }[tab] || renderSources)(nb, el, arg);
+  ({ sources: renderSources, pretest: renderPretest, lessons: renderLessons, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress }[tab] || renderSources)(nb, el, arg);
   if (tab === 'videos' && UI.vidFocus) {
     const id = UI.vidFocus; UI.vidFocus = null;
     const card = [...el.querySelectorAll('[data-vid]')].find((x) => x.dataset.vid === String(id));
@@ -1311,14 +1314,14 @@ function renderPretest(nb, el) {
   }
   el.innerHTML = `<div class="q-card stack">
     <div class="card overview row between"><div><h2>Pretest done ✓</h2><p class="muted" style="margin:0">Keep these answers in mind. You’ll meet them again in the visual lesson.</p></div>
-      <a class="btn primary" href="#/nb/${nb.id}/learn">Learn it visually →</a></div>
+      <a class="btn primary" href="#/nb/${nb.id}/lessons">Start learning →</a></div>
     ${qs.map((q, i) => { const raw = nb.pretest.answers[i] || ''; const a = /^\s*(idk|i ?d(on|o)n?'?t know|no idea|not sure|dunno|n\/?a|\?+|-+)\s*$/i.test(raw) ? '' : raw;
       const close = !!a && (coverage(a, q.answer) >= 0.3 || (words(a).length >= 2 && coverage(q.answer, a) >= 0.6));
       return `<div class="card"><div class="row between"><span class="tag">${esc(conceptName(nb, q.concept_id))}</span>${a ? `<span class="tag ${close ? 'good' : 'warn'}">${close ? 'Good instinct!' : 'Now you know'}</span>` : ''}</div>
       <div class="q-text">${esc(q.question)}</div>
       <div class="small muted">Your guess</div><div>${a ? esc(a) : '<i class="muted">skipped</i>'}</div>
       <div class="answer-box"><div class="small muted">Answer</div>${esc(q.answer)}</div></div>`; }).join('')}
-    <div class="row" style="justify-content:space-between"><button class="btn ghost" data-act="redo-pretest">Retake pretest</button><a class="btn primary" href="#/nb/${nb.id}/learn">Learn it visually →</a></div></div>`;
+    <div class="row" style="justify-content:space-between"><button class="btn ghost" data-act="redo-pretest">Retake pretest</button><a class="btn primary" href="#/nb/${nb.id}/lessons">Start learning →</a></div></div>`;
 }
 ACT['submit-pretest'] = async () => {
   const nb = curNb();
@@ -1327,10 +1330,345 @@ ACT['submit-pretest'] = async () => {
   await gainXP(5 * nb.pretest.answers.filter(Boolean).length + 5, 'pretest');
   render();
 };
-ACT['skip-pretest'] = async () => { const nb = curNb(); nb.pretest.done = true; await save(nb); go(`#/nb/${nb.id}/learn`); };
+ACT['skip-pretest'] = async () => { const nb = curNb(); nb.pretest.done = true; await save(nb); go(`#/nb/${nb.id}/lessons`); };
 ACT['redo-pretest'] = async () => { const nb = curNb(); nb.pretest = { done: false, answers: [] }; await save(nb); render(); };
 
 // ═════════════════════════ LEARN (visual) ═════════════════════════
+// ═════════════════════════ LEARN: guided lessons ═════════════════════════
+// The Learn tab is for learning a lecture for the first time: one section at a time, a few small steps each,
+// a quick check (multiple choice or short answer) after every step, then cover-and-recall of the whole section.
+// Gemini writes each section's lesson the first time it's opened; it's saved in the notebook (nb.lessons).
+// The old all-at-once cards page is now the Revise tab.
+function lessonOf(nb, i) {
+  const L = (nb.lessons || {})[i]; const c = nb.digest?.cards[i];
+  return L && c && L.title === c.title ? L : null;
+}
+function lessonStages(d) {
+  const st = [{ k: 'intro' }];
+  (d.steps || []).forEach((s, j) => { st.push({ k: 'step', j }); if (s.check?.question) st.push({ k: 'check', j }); });
+  st.push({ k: 'recall' }, { k: 'done' });
+  return st;
+}
+function lessonInfo(nb, i) {
+  const L = lessonOf(nb, i);
+  if (!L?.data) return { state: 'new', pct: 0, label: 'Not started' };
+  const st = lessonStages(L.data); const checks = Object.values(L.checks || {});
+  const right = checks.filter((x) => x.ok >= 1).length; const total = st.filter((s) => s.k === 'check').length;
+  if (L.done) return { state: 'done', pct: 100, label: total ? `Done ✓ · ${right}/${total} checks right` : 'Done ✓' };
+  return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: `In progress · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` };
+}
+const lessonNext = (nb) => { const n = nb.digest.cards.length; for (let i = 0; i < n; i++) if (lessonInfo(nb, i).state !== 'done') return i; return 0; };
+const lessonsDone = (nb) => nb.digest && nb.digest.cards.length > 0 && nb.digest.cards.every((_, i) => lessonInfo(nb, i).state === 'done');
+function cardShots(nb, c, n = 3) { const picked = refShots(nb, c.image_refs); return (picked.length ? picked : visualsFor(nb, c.source_ref, n)).slice(0, n); }
+
+function renderLessons(nb, el, arg) {
+  nb.lessons ||= {}; UI.cardRecall ||= {}; UI.shots = UI.shots || {};
+  loadVisuals(nb).then((changed) => { if (changed && route().tab === 'lessons') render(); });
+  if (arg !== '' && arg !== undefined && nb.digest.cards[+arg]) return renderLesson(nb, el, +arg);
+  const cards = nb.digest.cards; const infos = cards.map((_, i) => lessonInfo(nb, i));
+  const done = infos.filter((x) => x.state === 'done').length; const nx = lessonNext(nb);
+  const started = infos.some((x) => x.state !== 'new');
+  el.innerHTML = `<div class="stack">
+    <div class="card overview lesson-hero">
+      <h2>🎓 Learn it step by step</h2>
+      <p class="muted" style="margin:0">New to this topic? Go through the sections in order. Each one teaches a few small pieces, checks you understood with a quick question, then has you recall the whole section. Stuck? Every step has buttons to explain it differently.</p>
+      <div class="lesson-sum"><div class="meter"><i style="width:${pct(done / Math.max(1, cards.length))}%"></i></div><span class="small muted">${done} of ${cards.length} sections done</span></div>
+      <div class="row">${done === cards.length
+        ? `<a class="btn primary" href="#/nb/${nb.id}/recall">🧠 All done! Start recall →</a><button class="btn" data-act="lesson-open" data-i="0">Go through it again</button>`
+        : `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">${started ? 'Continue' : 'Start'}: ${esc(cards[nx].title)} →</button>`}</div>
+      <div class="small muted">Already learned this? <a href="#/nb/${nb.id}/learn">Revise</a> shows every card at once, with cover and recall.</div>
+    </div>
+    <div class="lesson-path">${cards.map((c, i) => {
+      const inf = infos[i]; const shot = cardShots(nb, c, 1)[0];
+      return `<button class="card lesson-tile ${inf.state}" data-act="lesson-open" data-i="${i}" aria-label="Section ${i + 1}: ${esc(c.title)}. ${esc(inf.label)}">
+        <span class="lt-num">${inf.state === 'done' ? '✓' : i + 1}</span>
+        <span class="lt-pic">${shot ? `<img loading="lazy" alt="" src="${shot.src}">` : `<span class="lt-emoji">${esc(c.emoji)}</span>`}</span>
+        <span class="lt-body"><b>${shot ? `${esc(c.emoji)} ` : ''}${esc(c.title)}</b><span class="small muted">${esc(inf.label)}</span>
+          <span class="lt-meter"><i style="width:${inf.pct}%"></i></span></span>
+        ${i === nx && done < cards.length ? '<span class="lt-next">Up next</span>' : ''}
+      </button>`;
+    }).join('')}</div>
+  </div>`;
+}
+
+// Zoom from the tapped tile into the lesson.
+ACT['lesson-open'] = (el) => {
+  const nb = curNb(); const i = +el.dataset.i; const hash = `#/nb/${nb.id}/lessons/${i}`;
+  let reduce = false; try { reduce = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* old browser */ }
+  const r = el.getBoundingClientRect();
+  if (reduce || !r.width || !document.body.animate) return go(hash);
+  const z = document.createElement('div'); z.className = 'lesson-zoom'; z.setAttribute('aria-hidden', 'true');
+  const pic = el.querySelector('img'); if (pic) z.innerHTML = `<img alt="" src="${pic.src}">`;
+  Object.assign(z.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+  document.body.appendChild(z);
+  const W = document.documentElement.clientWidth, H = window.innerHeight;
+  const a = z.animate([
+    { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', borderRadius: '18px' },
+    { left: '0px', top: '0px', width: W + 'px', height: H + 'px', borderRadius: '0px' },
+  ], { duration: 420, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+  let opened = false;
+  const open = () => {
+    if (opened) return; opened = true; UI.lessonDir = 'in'; go(hash);
+    requestAnimationFrame(() => { const f = z.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: 'ease-out', fill: 'forwards' }); f.onfinish = () => z.remove(); });
+    setTimeout(() => z.remove(), 900); // in case the fade never runs (background tab)
+  };
+  a.onfinish = open; setTimeout(open, 650);
+};
+
+function localLesson(nb, c) { // used when the AI isn't available: built from the study kit itself
+  const cons = (c.concept_ids || []).map((id) => nb.digest.concepts.find((x) => x.id === id)).filter(Boolean);
+  const qs = nb.digest.recall.filter((q) => (c.concept_ids || []).includes(q.concept_id));
+  return {
+    fallback: true, intro: cons[0]?.why_it_matters || nb.digest.overview, prior: [],
+    steps: c.points.map((p, j) => ({
+      title: p.split(/\s+/).slice(0, 5).join(' ').replace(/[.,;:]$/, ''),
+      explain: p + (cons[j] ? `\n\n**${cons[j].name}**: ${cons[j].definition}` : ''),
+      example: j === c.points.length - 1 ? c.analogy || '' : cons[j]?.mnemonic || '', terms: [],
+      check: qs[j] ? { type: 'short', question: qs[j].question, options: [], answer: qs[j].answer, explanation: '' } : null,
+    })),
+    summary: c.points, mnemonic: cons[0]?.mnemonic || '',
+  };
+}
+function cleanLesson(d) { // make sure every multiple-choice check really has its answer among the options
+  for (const s of d.steps || []) {
+    const ch = s.check; if (!ch?.question) { s.check = null; continue; }
+    if (ch.type === 'mcq') {
+      const opts = (ch.options || []).filter(Boolean);
+      const hit = opts.find((o) => norm(o) === norm(ch.answer)) || opts.find((o) => similar(o, ch.answer) > 0.85);
+      if (opts.length >= 2 && hit) {
+        for (let k = opts.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [opts[k], opts[r]] = [opts[r], opts[k]]; } // shuffle once; saved with the lesson
+        ch.options = opts; ch.answer = hit;
+      } else { ch.type = 'short'; ch.options = []; }
+    } else ch.options = [];
+  }
+  d.steps = (d.steps || []).filter((s) => s.title || s.explain);
+  return d;
+}
+async function buildLesson(nb, i, { force = false } = {}) {
+  const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
+  (UI.lessonBusy ||= {})[key] = true;
+  const prev = lessonOf(nb, i);
+  let data = null;
+  if (S.status.claude) {
+    try {
+      const cards = nb.digest.cards;
+      data = cleanLesson(await ai('lesson', {
+        sources: aiSources(nb), index: i + 1, count: cards.length, title: c.title, points: c.points, analogy: c.analogy,
+        concepts: (c.concept_ids || []).map((id) => nb.digest.concepts.find((x) => x.id === id)).filter(Boolean).map((x) => ({ name: x.name, definition: x.definition })),
+        before: cards.slice(0, i).map((x) => x.title), after: cards.slice(i + 1).map((x) => x.title),
+      }));
+      if (!data.steps.length) throw new Error('The lesson came back empty. Try again.');
+    } catch (e) {
+      data = null;
+      if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the lesson with AI (${e.message}). Showing a simpler one from your study cards.`, 'err');
+    }
+  }
+  if (!data) data = localLesson(nb, c);
+  if (data.fallback && prev?.data && !prev.data.fallback && force) data = prev.data; // a failed rewrite keeps the good one
+  nb.lessons[i] = { title: c.title, data, pos: force ? 0 : prev?.pos || 0, checks: force ? {} : prev?.checks || {}, help: force ? {} : prev?.help || {}, done: !force && !!prev?.done };
+  delete UI.lessonBusy[key];
+  await save(nb);
+}
+ACT['lesson-rewrite'] = async () => {
+  const nb = curNb(); const i = +route().arg;
+  if (!S.status.claude) { toast('Writing lessons needs the AI tutor. See Settings.', 'err'); return openSettings(); }
+  delete nb.lessons[i].data; render();
+  await buildLesson(nb, i, { force: true });
+  if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i);
+};
+
+function renderLesson(nb, el, i) {
+  const c = nb.digest.cards[i]; const L = lessonOf(nb, i); const key = `${nb.id}:${i}`;
+  if (!L?.data) {
+    el.innerHTML = `<div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a><span class="small muted">Section ${i + 1} of ${nb.digest.cards.length}</span></div>
+      <div class="card building lesson-card"><div style="font-size:2.6rem">${esc(c.emoji)}</div><h2 style="margin:6px 0">${esc(c.title)}</h2>
+      <div class="spinner lg" style="margin:14px auto"></div>
+      <p class="muted" style="margin:0">Writing a beginner-friendly lesson for this section…</p>
+      <p class="small muted">Usually 10–30 seconds. It’s saved, so next time it opens instantly.</p></div>`;
+    if (!UI.lessonBusy?.[key]) buildLesson(nb, i).then(() => { if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i); });
+    return;
+  }
+  const d = L.data; const st = lessonStages(d); L.pos = Math.min(L.pos || 0, st.length - 1);
+  const s = st[L.pos]; const steps = d.steps.length;
+  const dots = st.filter((x) => x.k !== 'check').map((x, k) => { const at = st.indexOf(x); return `<i class="${at < L.pos ? 'f' : ''} ${at === L.pos || (s.k === 'check' && x.k === 'step' && x.j === s.j) ? 'on' : ''}"></i>`; }).join('');
+  el.innerHTML = `<div class="lesson-wrap">
+    <div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a>
+      <span class="small muted">Section ${i + 1} of ${nb.digest.cards.length} · ${esc(c.title)}</span></div>
+    <div class="lesson-dots" aria-label="Lesson progress">${dots}</div>
+    <div class="card lesson-card ${UI.lessonDir === 'back' ? 'stage-back' : UI.lessonDir ? 'stage-in' : ''}" id="lessonStage">${lessonStageHTML(nb, i, L, s, steps)}</div>
+    <div class="lesson-nav">${L.pos > 0 && s.k !== 'done' ? '<button class="btn ghost" data-act="lesson-back">‹ Back</button>' : '<span></span>'}${lessonNextBtn(nb, i, L, s)}</div>
+  </div>`;
+  UI.lessonDir = '';
+}
+function lessonNextBtn(nb, i, L, s) {
+  const ch = s.k === 'check' ? L.data.steps[s.j].check : null;
+  if (s.k === 'intro') return `<button class="btn primary lg" data-act="lesson-next">Start lesson →</button>`;
+  if (s.k === 'step') return `<button class="btn primary" data-act="lesson-next">${L.data.steps[s.j].check?.question ? 'Got it → quick check' : 'Next →'}</button>`;
+  if (s.k === 'check') return L.checks[s.j] ? '<button class="btn primary" data-act="lesson-next">Next →</button>' : `<button class="btn ghost" data-act="lesson-next">Skip this question</button>`;
+  if (s.k === 'recall') return `<button class="btn ${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'primary' : 'ghost'}" data-act="lesson-next">${UI.cardRecall[`${nb.id}:${i}`]?.revealed ? 'Finish section →' : 'Skip to the end'}</button>`;
+  return '';
+}
+function lessonStageHTML(nb, i, L, s, steps) {
+  const c = nb.digest.cards[i]; const d = L.data;
+  if (s.k === 'intro') {
+    const shots = cardShots(nb, c, 3);
+    return `<div class="lesson-emoji">${esc(c.emoji)}</div><h2>${esc(c.title)}</h2>
+      <div class="lesson-text">${md(d.intro)}</div>
+      ${shots.length ? shotStrip(`lesson${i}`, shots) : ''}
+      ${d.prior?.length ? `<div class="lesson-box"><b>🧩 Quick refresher before you start</b><ul>${d.prior.map((p) => `<li>${md(p).replace(/^<p>|<\/p>\s*$/g, '')}</li>`).join('')}</ul></div>` : ''}
+      <div class="lesson-box plain"><b>What you’ll learn</b><ol class="lesson-outline">${d.steps.map((x) => `<li>${esc(x.title)}</li>`).join('')}</ol>
+        <div class="small muted">${steps} short steps · about ${Math.max(3, steps * 2)} min · a quick check after each</div></div>
+      ${d.fallback ? `<div class="small muted">This is a simpler lesson made from your study cards. <a href="#" data-act="lesson-rewrite">✨ Rewrite it with AI</a></div>` : ''}`;
+  }
+  if (s.k === 'step') {
+    const x = d.steps[s.j]; const help = (L.help || {})[s.j] || []; const busy = UI.lessonHelpBusy === `${nb.id}:${i}:${s.j}`;
+    const lab = { simpler: '🧒 Simpler', example: '💡 Another example', question: '❓ You asked' };
+    return `<div class="lesson-kicker">Step ${s.j + 1} of ${steps}</div><h2>${esc(x.title)}</h2>
+      <div class="lesson-text">${md(x.explain)}</div>
+      ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
+      ${x.terms?.length ? `<dl class="lesson-terms">${x.terms.map((t) => `<div><dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd></div>`).join('')}</dl>` : ''}
+      ${help.map((h) => `<div class="lesson-box help"><b>${lab[h.mode] || '💬'}${h.q ? `: “${esc(h.q)}”` : ''}</b><div>${md(h.a)}</div></div>`).join('')}
+      ${busy ? '<div class="lesson-box help"><span class="spinner"></span> Thinking…</div>' : ''}
+      <div class="lesson-help-row"><span class="small muted">Not clicking?</span>
+        <button class="btn sm" data-act="lesson-help" data-mode="simpler" ${busy ? 'disabled' : ''}>🧒 Explain it simpler</button>
+        <button class="btn sm" data-act="lesson-help" data-mode="example" ${busy ? 'disabled' : ''}>💡 Another example</button>
+        <button class="btn sm" data-act="lesson-ask" ${busy ? 'disabled' : ''}>❓ Ask a question</button></div>
+      ${UI.lessonAsk === `${nb.id}:${i}:${s.j}` ? `<div class="lesson-ask"><textarea id="lessonQ" rows="2" placeholder="What’s confusing? e.g. Why does the dorsal root only carry sensory signals?"></textarea>
+        <div class="row"><button class="btn primary sm" data-act="lesson-help" data-mode="question">Ask</button><button class="btn ghost sm" data-act="lesson-ask-cancel">Cancel</button></div></div>` : ''}`;
+  }
+  if (s.k === 'check') {
+    const x = d.steps[s.j]; const ch = x.check; const r = (L.checks || {})[s.j]; const grading = UI.lessonGrading === `${nb.id}:${i}:${s.j}`;
+    let body;
+    if (ch.type === 'mcq') {
+      body = `<div class="lesson-opts">${ch.options.map((o, k) => {
+        const cls = r ? (o === ch.answer ? 'right' : r.pick === k ? 'wrong' : 'dim') : '';
+        return `<button class="opt ${cls}" data-act="lesson-mcq" data-o="${k}" ${r ? 'disabled' : ''}><span class="opt-l">${'ABCD'[k] || k + 1}</span><span>${esc(o)}</span></button>`;
+      }).join('')}</div>`;
+    } else {
+      body = r ? `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(r.text)}</div></div>`
+        : `<textarea id="lessonA" rows="3" placeholder="Answer in your own words…" ${grading ? 'disabled' : ''}>${grading ? esc(UI.lessonDraft || '') : ''}</textarea>
+          <div class="row"><button class="btn primary" data-act="lesson-short" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : 'Check my answer'}</button></div>`;
+    }
+    const v = r?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
+    return `<div class="lesson-kicker">Quick check · step ${s.j + 1} of ${steps} · ${ch.type === 'mcq' ? 'multiple choice' : 'short answer'}</div>
+      <h2 class="lesson-q">${esc(ch.question)}</h2>${body}
+      ${r ? `<div class="verdict ${v}"><h3>${head}</h3>${r.feedback ? `<div>${esc(r.feedback)}</div>` : ''}
+        ${ch.type === 'short' ? `<div class="small" style="margin-top:6px"><b>Key answer:</b> ${esc(ch.answer)}</div>` : ''}
+        ${ch.explanation ? `<div class="small" style="margin-top:6px">${esc(ch.explanation)}</div>` : ''}
+        ${v !== 'correct' ? '<div style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Review the step</button></div>' : ''}</div>` : ''}`;
+  }
+  if (s.k === 'recall') {
+    const stR = UI.cardRecall[`${nb.id}:${i}`];
+    if (!stR?.revealed) {
+      return `<div class="lesson-kicker">Put it together</div><h2>Cover & recall</h2>
+        <p class="muted">Without looking back, write down everything you remember about <b>${esc(c.title)}</b>. There are ${c.points.length} key points. Pulling it out of your head is what makes it stick.</p>
+        <textarea data-cr="${i}" rows="5" placeholder="From memory…">${esc(stR?.text || '')}</textarea>
+        <div class="row"><button class="btn primary" data-act="card-reveal" data-i="${i}">Reveal & compare</button></div>`;
+    }
+    const got = stR.hits.filter(Boolean).length;
+    return `<div class="lesson-kicker">Put it together</div><h2>Cover & recall</h2>
+      <ul class="lesson-hits">${c.points.map((p, j) => `<li class="${stR.hits[j] ? 'hit' : 'miss'}">${stR.hits[j] ? '✓' : '✗'} ${esc(p)}</li>`).join('')}</ul>
+      <div class="small"><b>${got}/${c.points.length}</b> recalled. ${got === c.points.length ? 'Perfect! 🎉' : 'The red ones are your gaps. Reread them now, then try once more.'}</div>
+      <div class="row"><button class="btn sm" data-act="card-retry" data-i="${i}">Try again</button></div>`;
+  }
+  // done
+  const inf = lessonInfo(nb, i); const n = nb.digest.cards.length; const nx = i + 1 < n ? i + 1 : null;
+  return `<div class="lesson-done"><div class="pm-big-ico">✓</div><h2>Section complete</h2>
+    <p class="pm-xp">${esc(inf.label.replace(/^Done ✓ ·? ?/, '')) || 'Nice work'}</p></div>
+    ${d.summary?.length ? `<div class="lesson-box plain"><b>Takeaways</b><ul>${d.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+    ${d.mnemonic ? `<div class="lesson-box ex"><b>🧠 Memory hook</b><div>${esc(d.mnemonic)}</div></div>` : ''}
+    <div class="row lesson-done-row">${nx !== null ? `<button class="btn primary lg" data-act="lesson-open" data-i="${nx}">Next: ${esc(nb.digest.cards[nx].title)} →</button>`
+      : `<a class="btn primary lg" href="#/nb/${nb.id}/recall">🧠 Last section done! Start recall →</a>`}
+      <a class="btn" href="#/nb/${nb.id}/lessons">All sections</a></div>`;
+}
+
+// Moving between steps re-draws only the lesson and keeps it in view.
+function lessonShow(nb, i) {
+  const el = $('#tab'); if (!el) return;
+  UI.anchorStop?.(); const view = $('#view'); if (view) view.style.minHeight = '';
+  renderLesson(nb, el, i);
+  const top = $('.lesson-top'); if (top && top.getBoundingClientRect().top < 64) window.scrollTo({ top: Math.max(0, window.scrollY + top.getBoundingClientRect().top - 130), behavior: 'smooth' });
+}
+async function lessonMove(delta) {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); if (!L) return;
+  const st = lessonStages(L.data);
+  L.pos = Math.max(0, Math.min(st.length - 1, (L.pos || 0) + delta));
+  UI.lessonDir = delta > 0 ? 'in' : 'back'; UI.lessonAsk = null;
+  if (st[L.pos].k === 'done' && !L.done) {
+    L.done = true;
+    if (Object.values(nb.lessons).filter((x) => x?.done).length >= 1) nb.progress.learn = true;
+    save(nb); lessonShow(nb, i); confetti(); await gainXP(15, 'section learned'); return;
+  }
+  save(nb); lessonShow(nb, i);
+}
+ACT['lesson-next'] = () => lessonMove(1);
+ACT['lesson-back'] = () => {
+  const nb = curNb(); const L = lessonOf(nb, +route().arg); if (!L) return;
+  const st = lessonStages(L.data); const s = st[L.pos];
+  // from a check's "Review the step", go back to that step itself
+  lessonMove(s?.k === 'check' ? -1 : -1);
+};
+ACT['lesson-ask'] = () => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; UI.lessonAsk = `${nb.id}:${i}:${s.j}`; lessonShow(nb, i); setTimeout(() => $('#lessonQ')?.focus(), 30); };
+ACT['lesson-ask-cancel'] = () => { UI.lessonAsk = null; lessonShow(curNb(), +route().arg); };
+ACT['lesson-help'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos]; if (s.k !== 'step') return;
+  const mode = el.dataset.mode; const q = mode === 'question' ? ($('#lessonQ')?.value || '').trim() : '';
+  if (mode === 'question' && !q) { toast('Type your question first'); $('#lessonQ')?.focus(); return; }
+  if (!S.status.claude) { toast('The help buttons need the AI tutor. See Settings.', 'err'); return openSettings(); }
+  const x = L.data.steps[s.j]; const tag = `${nb.id}:${i}:${s.j}`;
+  UI.lessonHelpBusy = tag; UI.lessonAsk = null; lessonShow(nb, i);
+  try {
+    const r = await ai('lesson_help', { sources: aiSources(nb), title: nb.digest.cards[i].title, step_title: x.title, explain: x.explain, example: x.example, mode, question: q, earlier: (L.help[s.j] || []).slice(-3) });
+    (L.help[s.j] ||= []).push({ mode, q, a: r.answer }); await save(nb);
+  } catch (e) { aiError(e); }
+  UI.lessonHelpBusy = null;
+  if (route().tab === 'lessons' && +route().arg === i) {
+    lessonShow(nb, i);
+    const boxes = document.querySelectorAll('#lessonStage .lesson-box.help'); boxes[boxes.length - 1]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+};
+function lessonRecord(nb, i, j, ok) { const ids = nb.digest.cards[i].concept_ids || []; if (ids.length) record(nb, ids[j % ids.length], ok); }
+ACT['lesson-mcq'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
+  if (s.k !== 'check' || L.checks[s.j]) return;
+  const ch = L.data.steps[s.j].check; const k = +el.dataset.o; const ok = ch.options[k] === ch.answer;
+  L.checks[s.j] = { pick: k, ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: ok ? '' : `The answer is: ${ch.answer}` };
+  lessonRecord(nb, i, s.j, ok ? 1 : 0); await save(nb); lessonShow(nb, i);
+  if (ok) gainXP(4, 'quick check');
+};
+ACT['lesson-short'] = async () => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const s = lessonStages(L.data)[L.pos];
+  if (s.k !== 'check' || L.checks[s.j]) return;
+  const ch = L.data.steps[s.j].check; const text = ($('#lessonA')?.value || '').trim();
+  if (!text) { toast('Write an answer first, even a guess. Guessing helps you remember.'); $('#lessonA')?.focus(); return; }
+  let r = quickGrade(text, ch.answer);
+  if (!r && S.status.claude) {
+    UI.lessonGrading = `${nb.id}:${i}:${s.j}`; UI.lessonDraft = text; lessonShow(nb, i);
+    try { r = await ai('grade', { concept: nb.digest.cards[i].title, question: ch.question, answer: ch.answer, response: text }); }
+    catch (e) { aiError(e); r = null; }
+    UI.lessonGrading = null;
+  }
+  if (!r || !r.verdict) { const cv = coverage(text, ch.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare your answer with the key answer below.' }; }
+  const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
+  L.checks[s.j] = { text, ok, verdict: r.verdict, feedback: r.feedback || '' };
+  lessonRecord(nb, i, s.j, ok); await save(nb);
+  if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i);
+  if (ok) gainXP(ok >= 1 ? 5 : 2, 'quick check');
+};
+document.addEventListener('keydown', (e) => {
+  if (route().tab !== 'lessons' || !$('#lessonStage') || !$('#modal').classList.contains('hidden') || document.getElementById('pomoScreen')) return;
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.target.id === 'lessonA') { e.preventDefault(); ACT['lesson-short'](); }
+    if (e.target.id === 'lessonQ') { e.preventDefault(); $('#lessonStage [data-mode="question"]')?.click(); }
+    return;
+  }
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  const opt = { a: 0, b: 1, c: 2, d: 3, 1: 0, 2: 1, 3: 2, 4: 3 }[e.key.toLowerCase()];
+  if (opt !== undefined) { const b = document.querySelectorAll('#lessonStage [data-act="lesson-mcq"]')[opt]; if (b && !b.disabled) { e.preventDefault(); b.click(); } return; }
+  if (e.key === 'ArrowRight') { const n = $('.lesson-nav [data-act="lesson-next"]'); if (n) { e.preventDefault(); n.click(); } }
+  if (e.key === 'ArrowLeft') { const b = $('.lesson-nav [data-act="lesson-back"]'); if (b) { e.preventDefault(); b.click(); } }
+});
+
 function renderLearn(nb, el) {
   const d = nb.digest;
   const mode = UI.cardMode || 'study';
@@ -2317,6 +2655,285 @@ ACT['lb-leave'] = async () => {
   S.meta.lbJoined = false; UI.lb = null; await saveMeta(); toast('You left the leaderboard'); render();
 };
 
+// ═════════════════════════ FOCUS TIMER (pomodoro) ═════════════════════════
+// The running timer lives in localStorage as an end time, so reloads, locked phones and background tabs can't make it drift.
+// A floating pill follows you to every page (drag it; it snaps to the nearest corner). When time is up a full-screen
+// page opens over whatever you were doing; closing it puts you back exactly where you were.
+const PM_KEY = 'encode-pomo', PMC_KEY = 'encode-pomo-cfg';
+const PM_LAB = { focus: 'Focus', short: 'Short break', long: 'Long break' };
+const PM_XP = 10, PM_XP_DAY = 8, PM_XP_MIN = 10; // XP per finished focus block, rewarded blocks per day, shortest block that earns XP (min)
+const PM_TIPS = ['Stand up and stretch.', 'Drink some water.', 'Look at something far away for 20 seconds.', 'Walk around for a minute.', 'Take a few slow, deep breaths.', 'Rest your eyes. Skip the phone scroll.', 'Roll your shoulders and neck.', 'Grab a quick snack.'];
+const pmRead = (k) => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } };
+const pmWrite = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
+const PMC = { focus: 25, short: 5, long: 15, every: 4, sound: true, auto: false, notify: false, corner: 'tr', ...(pmRead(PMC_KEY) || {}) };
+const pmDur = (mode) => Math.round((mode === 'focus' ? PMC.focus : mode === 'short' ? PMC.short : PMC.long) * 60);
+const pmFresh = (mode, base = {}) => ({ cycle: 0, nb: '', screen: '', last: null, ...base, mode, total: pmDur(mode), left: pmDur(mode), endsAt: 0, running: false, started: false });
+let PM = { ...pmFresh('focus'), ...(pmRead(PM_KEY) || {}) };
+const pmSave = () => pmWrite(PM_KEY, PM);
+const pmLeft = () => (PM.running ? Math.max(0, Math.ceil((PM.endsAt - Date.now()) / 1000)) : PM.left);
+const pmFmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+const pmBreakNext = (cycle) => (cycle > 0 && cycle % PMC.every === 0 ? 'long' : 'short');
+const pmRound = () => Math.min(PM.cycle + (PM.mode === 'focus' ? 1 : 0), PMC.every) || 1;
+const pmStats = () => { const f = S.meta.focus || {}; const k = dayKey(); return { min: f.days?.[k] || 0, blocks: f.blocks?.[k] || 0, xp: f.xp?.[k] || 0, nb: f.nb || {} }; };
+
+// sound: a soft three-note chime made in the browser (no file). iPhones only allow sound after a tap, so Start unlocks it.
+function pmAudio() { try { UI.actx = UI.actx || new (window.AudioContext || window.webkitAudioContext)(); if (UI.actx.state === 'suspended') UI.actx.resume(); } catch { /* no audio */ } }
+function pmChime(up = true) {
+  if (!PMC.sound || !UI.actx) return;
+  try {
+    const a = UI.actx; const notes = up ? [784, 988, 1175] : [988, 784];
+    notes.forEach((f, i) => {
+      const o = a.createOscillator(), g = a.createGain(); const t = a.currentTime + i * 0.22;
+      o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.9);
+      o.connect(g).connect(a.destination); o.start(t); o.stop(t + 0.95);
+    });
+  } catch { /* ignore */ }
+  try { navigator.vibrate?.([180, 90, 180]); } catch { /* ignore */ }
+}
+function pmNotify(title, body) {
+  if (!PMC.notify || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try { const n = new Notification(title, { body, icon: 'logo-mark.png', tag: 'encode-pomo' }); n.onclick = () => { window.focus(); n.close(); }; } catch { /* ignore */ }
+}
+
+// ── controls ──
+function pmStart() { pmAudio(); const l = PM.left || PM.total; PM.running = true; PM.started = true; PM.endsAt = Date.now() + l * 1000; pmSave(); pmDrawAll(); }
+function pmPause() { PM.left = pmLeft(); PM.running = false; pmSave(); pmDrawAll(); }
+function pmReset() { PM = pmFresh(PM.mode, { cycle: PM.cycle, nb: PM.nb, last: PM.last }); pmSave(); pmDrawAll(); }
+function pmSkip() {
+  if (PM.mode === 'focus') PM = pmFresh(pmBreakNext(PM.cycle + 1), { cycle: PM.cycle, nb: PM.nb, last: PM.last });
+  else PM = pmFresh('focus', { cycle: PM.mode === 'long' ? 0 : PM.cycle, nb: PM.nb, last: PM.last });
+  pmSave(); pmDrawAll();
+}
+function pmFinish() {
+  const stored = pmRead(PM_KEY);
+  if (stored && stored.endsAt !== PM.endsAt) { PM = { ...pmFresh('focus'), ...stored }; pmDrawAll(); return; } // another tab already handled it
+  const was = PM.mode; const keep = { nb: PM.nb };
+  if (was === 'focus') {
+    const min = Math.round(PM.total / 60); const st = pmStats();
+    const xp = min >= PM_XP_MIN && st.xp < PM_XP_DAY ? PM_XP : 0;
+    const why = xp ? '' : min < PM_XP_MIN ? `Blocks under ${PM_XP_MIN} min don’t earn XP.` : `You’ve earned focus XP ${PM_XP_DAY} times today, the daily max. The timer still works.`;
+    const cycle = PM.cycle + 1;
+    PM = pmFresh(pmBreakNext(cycle), { ...keep, cycle, last: { min, xp, why, nb: PM.nb, round: cycle, at: Date.now() } });
+    PM.screen = 'focusDone';
+    if (PMC.auto) { PM.running = true; PM.started = true; PM.endsAt = Date.now() + PM.total * 1000; PM.screen = 'break'; }
+    pmSave(); // claim this block before anything async, so a second tab can't count it twice
+    const f = (S.meta.focus = S.meta.focus || {}); const k = dayKey();
+    for (const n of ['days', 'blocks', 'xp', 'nb']) f[n] = f[n] || {};
+    f.days[k] = (f.days[k] || 0) + min; f.blocks[k] = (f.blocks[k] || 0) + 1; if (keep.nb) f.nb[keep.nb] = (f.nb[keep.nb] || 0) + min;
+    if (xp) { f.xp[k] = (f.xp[k] || 0) + 1; gainXP(xp, 'focus block'); } else saveMeta();
+    pmChime(true); pmNotify('Focus done ✓', `${xp ? `+${xp} XP. ` : ''}Time for a ${Math.round(pmDur(PM.mode) / 60)}-minute break.`);
+  } else {
+    PM = pmFresh('focus', { ...keep, cycle: was === 'long' ? 0 : PM.cycle, last: PM.last });
+    PM.screen = 'breakDone'; pmSave();
+    pmChime(false); pmNotify('Break’s over', `Ready for round ${pmRound()} of ${PMC.every}?`);
+  }
+  pmDrawAll();
+}
+function pmCloseScreen() { if (!PM.screen) return; PM.screen = ''; pmSave(); pmDrawAll(); }
+
+ACT['pomo-start'] = () => pmStart();
+ACT['pomo-pause'] = () => pmPause();
+ACT['pomo-toggle'] = () => (PM.running ? pmPause() : pmStart());
+ACT['pomo-reset'] = () => pmReset();
+ACT['pomo-skip'] = () => { if (PM.mode === 'focus' && PM.started && !confirm('Skip this focus block? It won’t count toward XP.')) return; pmSkip(); };
+ACT['pomo-mode'] = (el) => {
+  const m = el.dataset.v; if (m === PM.mode && !PM.started) return;
+  if (PM.mode === 'focus' && PM.started && !confirm('Stop this focus block? It won’t count.')) return;
+  PM = pmFresh(m, { cycle: PM.cycle, nb: PM.nb, last: PM.last }); pmSave(); pmDrawAll();
+};
+ACT['pomo-open'] = () => { PM.screen = 'control'; pmSave(); pmDrawAll(); };
+ACT['pomo-close'] = () => pmCloseScreen();
+ACT['pomo-break'] = () => { pmAudio(); PM.screen = 'break'; pmStart(); };
+ACT['pomo-focus-now'] = () => { PM = pmFresh('focus', { cycle: PM.mode === 'long' ? 0 : PM.cycle, nb: PM.nb, last: PM.last }); pmStart(); };
+ACT['pomo-end-break'] = () => { PM = pmFresh('focus', { cycle: PM.mode === 'long' ? 0 : PM.cycle, nb: PM.nb, last: PM.last }); PM.screen = 'breakDone'; pmSave(); pmDrawAll(); };
+
+// ── drawing ──
+const PM_ICON = {
+  play: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>',
+};
+function pmRing(size, sw, cls = '') {
+  const r = (size - sw) / 2; const c = +(2 * Math.PI * r).toFixed(1);
+  return `<svg class="pm-ring ${cls}" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" class="pm-track" stroke-width="${sw}"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" class="pm-arc" stroke-width="${sw}" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="0" data-pm="arc" data-c="${c}" transform="rotate(-90 ${size / 2} ${size / 2})"/></svg>`;
+}
+const pmDots = () => `<span class="pm-dots" aria-label="Round ${pmRound()} of ${PMC.every}">${[...Array(PMC.every)].map((_, i) => `<i class="${i < PM.cycle ? 'f' : ''}"></i>`).join('')}</span>`;
+const pmMain = (cls = 'btn primary') => (PM.running ? `<button class="${cls}" data-act="pomo-pause">${PM_ICON.pause} Pause</button>`
+  : `<button class="${cls}" data-act="pomo-start">${PM_ICON.play} ${PM.started ? 'Resume' : 'Start'}</button>`);
+
+function pomoHomeHTML() {
+  const st = pmStats(); const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
+  const nbMin = PM.nb ? st.nb[PM.nb] || 0 : 0;
+  return `<div class="row between"><h2>⏳ Focus timer</h2><span class="small muted">Round ${pmRound()} of ${PMC.every} ${pmDots()}</span></div>
+  <div class="card pm-home mode-${PM.mode}">
+    <div class="pm-home-ring">${pmRing(160, 11)}<div class="pm-center"><b data-pm="time">${pmFmt(pmLeft())}</b><span>${PM.running ? PM_LAB[PM.mode].toLowerCase() : PM.started ? 'paused' : PM_LAB[PM.mode].toLowerCase()}</span></div></div>
+    <div class="pm-home-side">
+      <div class="seg pm-modes">${['focus', 'short', 'long'].map((m) => `<button class="${PM.mode === m ? 'on' : ''}" data-act="pomo-mode" data-v="${m}">${m === 'focus' ? 'Focus' : m === 'short' ? 'Short' : 'Long'} ${m === 'focus' ? PMC.focus : m === 'short' ? PMC.short : PMC.long}</button>`).join('')}</div>
+      <label class="field"><span>Studying</span><select id="pmNb"><option value="">Not tied to a notebook</option>${nbs.map((n) => `<option value="${esc(n.id)}" ${PM.nb === n.id ? 'selected' : ''}>${esc(n.title)}</option>`).join('')}</select></label>
+      <div class="row">${pmMain()}${PM.started ? '<button class="btn" data-act="pomo-reset">Reset</button>' : ''}<button class="btn ghost" data-act="pomo-skip">Skip ›</button></div>
+      <div class="small muted">Today: ${st.blocks} focus block${st.blocks === 1 ? '' : 's'} · ${st.min} min${st.xp ? ` · +${st.xp * PM_XP} XP` : ''}${nbMin ? ` · ${nbMin} min on this notebook so far` : ''}</div>
+      <div class="small muted">+${PM_XP} XP per finished focus block (up to ${PM_XP_DAY} a day). Change the times in ⚙︎ Settings.</div>
+    </div>
+  </div>`;
+}
+function drawPomoHome() { const h = document.getElementById('pomoHome'); if (h) h.innerHTML = pomoHomeHTML(); }
+
+function drawPill() {
+  let el = document.getElementById('pomoPill');
+  const show = PM.started && !PM.screen;
+  if (!show) { if (el) el.hidden = true; return; }
+  if (!el) {
+    el = document.createElement('div'); el.id = 'pomoPill'; el.className = 'pm-pill'; el.tabIndex = 0; el.setAttribute('role', 'button');
+    document.body.appendChild(el); pmDragSetup(el);
+  }
+  el.hidden = false; el.className = `pm-pill mode-${PM.mode} ${PM.running ? '' : 'paused'}`;
+  el.setAttribute('aria-label', `${PM_LAB[PM.mode]} timer, ${pmFmt(pmLeft())} left. Tap to open, drag to move.`);
+  el.innerHTML = `<span class="pm-grip" aria-hidden="true"></span>${pmRing(28, 3.5)}<b data-pm="time">${pmFmt(pmLeft())}</b><span class="pm-lab">${PM.running ? (PM.mode === 'focus' ? 'focus' : 'break') : 'paused'}</span>
+    <button class="pm-pp" data-act="pomo-toggle" aria-label="${PM.running ? 'Pause' : 'Resume'}">${PM.running ? PM_ICON.pause : PM_ICON.play}</button>`;
+  pmPlace();
+}
+// corners sit below the header at the top and above the home bar at the bottom
+function pmPlace() {
+  const el = document.getElementById('pomoPill'); if (!el || el.hidden || el.classList.contains('drag')) return;
+  const pad = 12, W = document.documentElement.clientWidth, H = window.innerHeight;
+  let top = (document.querySelector('.topbar')?.getBoundingClientRect().bottom || 56) + 10;
+  const tabs = document.querySelector('.tabs-bar')?.getBoundingClientRect(); // stay clear of a notebook's tab bar near the top
+  if (tabs && tabs.height && tabs.top < top + el.offsetHeight) top = Math.max(top, tabs.bottom + 8);
+  const probe = UI.pmProbe || (UI.pmProbe = Object.assign(document.createElement('div'), { style: 'position:fixed;bottom:0;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden' }));
+  if (!probe.isConnected) document.body.appendChild(probe);
+  const bottom = (probe.offsetHeight || 0) + 18;
+  const c = PMC.corner || 'tr';
+  el.style.left = Math.max(pad, c[1] === 'l' ? pad : W - el.offsetWidth - pad) + 'px';
+  el.style.top = Math.max(top, c[0] === 't' ? top : H - el.offsetHeight - bottom) + 'px';
+}
+function pmDragSetup(el) {
+  let D = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button || e.target.closest('button')) return;
+    const r = el.getBoundingClientRect(); D = { x: e.clientX, y: e.clientY, ox: e.clientX - r.left, oy: e.clientY - r.top, moved: false };
+    try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!D) return;
+    if (!D.moved && Math.hypot(e.clientX - D.x, e.clientY - D.y) < 6) return;
+    D.moved = true; el.classList.add('drag');
+    const W = document.documentElement.clientWidth, H = window.innerHeight;
+    el.style.left = Math.min(W - el.offsetWidth - 4, Math.max(4, e.clientX - D.ox)) + 'px';
+    el.style.top = Math.min(H - el.offsetHeight - 4, Math.max(4, e.clientY - D.oy)) + 'px';
+  });
+  const end = (e) => {
+    if (!D) return; const d = D; D = null; el.classList.remove('drag');
+    if (!d.moved) { if (e.type === 'pointerup') ACT['pomo-open'](); return; }
+    const r = el.getBoundingClientRect();
+    PMC.corner = (r.top + r.height / 2 < window.innerHeight / 2 ? 't' : 'b') + (r.left + r.width / 2 < document.documentElement.clientWidth / 2 ? 'l' : 'r');
+    pmWrite(PMC_KEY, PMC); pmPlace();
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  el.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); ACT['pomo-open'](); } });
+}
+window.addEventListener('resize', () => pmPlace());
+window.addEventListener('hashchange', () => setTimeout(pmPlace, 60)); // a new page may add or remove the tab bar
+window.addEventListener('scroll', () => { if (UI.pmRaf || !PM.started || (PMC.corner || 'tr')[0] !== 't') return; UI.pmRaf = requestAnimationFrame(() => { UI.pmRaf = 0; pmPlace(); }); }, { passive: true });
+
+function pmScreenHTML() {
+  const L = PM.last; const nb = L?.nb ? getNb(L.nb) : null;
+  const tips = (seed) => { const i = Math.abs(Math.floor(seed / 1000)) % PM_TIPS.length; return `${PM_TIPS[i]} ${PM_TIPS[(i + 3) % PM_TIPS.length]}`; };
+  const brkMin = Math.round(PM.total / 60);
+  if (PM.screen === 'focusDone') return `
+    <div class="pm-big-ico">✓</div><h1>Focus done</h1>
+    <p class="pm-xp">${L?.xp ? `+${L.xp} XP · ` : ''}round ${Math.min(L?.round || 1, PMC.every)} of ${PMC.every} done</p>
+    <p class="muted">${L?.min || 0} min${nb ? ` on <b>${esc(nb.title)}</b>` : ''}. ${PM.mode === 'long' ? 'You finished a full set, so take a longer break.' : 'Nice work.'}</p>
+    ${L?.why ? `<p class="small muted">${esc(L.why)}</p>` : ''}
+    <p class="pm-tip">Take ${brkMin}: ${tips(L?.at || 0)}</p>
+    <div class="pm-actions"><button class="btn primary lg" data-act="pomo-break">Start ${brkMin}-min break</button>
+      <button class="btn" data-act="pomo-focus-now">Skip break, keep going</button></div>
+    <button class="btn ghost" data-act="pomo-close">Back to studying</button>`;
+  if (PM.screen === 'break') return `
+    ${L && Date.now() - L.at < 60 * 60e3 && L.xp ? `<p class="pm-xp">Focus done · +${L.xp} XP</p>` : ''}
+    <p class="pm-kicker">${PM_LAB[PM.mode]}</p>
+    <div class="pm-screen-ring">${pmRing(220, 13)}<div class="pm-center"><b data-pm="time">${pmFmt(pmLeft())}</b><span>${PM.running ? 'left' : 'paused'}</span></div></div>
+    <p class="pm-tip">${tips(L?.at || PM.endsAt)}</p>
+    <div class="pm-actions">${pmMain('btn')}<button class="btn" data-act="pomo-end-break">End break early</button></div>
+    <button class="btn ghost" data-act="pomo-close">Back to studying <span class="small muted">(break keeps running)</span></button>`;
+  if (PM.screen === 'breakDone') return `
+    <div class="pm-big-ico">⚡</div><h1>Break’s over</h1>
+    <p class="muted">Ready for round ${pmRound()} of ${PMC.every}?${PM.nb && getNb(PM.nb) ? ` Back to <b>${esc(getNb(PM.nb).title)}</b>.` : ''}</p>
+    <div class="pm-actions"><button class="btn primary lg" data-act="pomo-focus-now">Start ${PMC.focus}-min focus</button></div>
+    <button class="btn ghost" data-act="pomo-close">Not now</button>`;
+  return `
+    <p class="pm-kicker">${PM_LAB[PM.mode]} · round ${pmRound()} of ${PMC.every}</p>
+    <div class="pm-screen-ring">${pmRing(220, 13)}<div class="pm-center"><b data-pm="time">${pmFmt(pmLeft())}</b><span>${PM.running ? 'left' : PM.started ? 'paused' : 'ready'}</span></div></div>
+    <div class="pm-actions">${pmMain('btn primary lg')}${PM.started ? '<button class="btn" data-act="pomo-reset">Reset</button>' : ''}<button class="btn" data-act="pomo-skip">Skip ›</button></div>
+    <button class="btn ghost" data-act="pomo-close">Back to studying</button>`;
+}
+function drawScreen() {
+  let el = document.getElementById('pomoScreen');
+  if (!PM.screen) { if (el) el.remove(); document.documentElement.classList.remove('pm-open'); return; }
+  if (!el) { el = document.createElement('div'); el.id = 'pomoScreen'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el); }
+  el.className = `pm-screen mode-${PM.mode}`; el.setAttribute('aria-label', PM.screen === 'focusDone' ? 'Focus done' : PM.screen === 'breakDone' ? 'Break is over' : 'Focus timer');
+  el.innerHTML = `<div class="pm-screen-in">${pmScreenHTML()}</div>`;
+  document.documentElement.classList.add('pm-open');
+  setTimeout(() => el.querySelector('.btn.primary, .btn')?.focus({ preventScroll: true }), 30);
+}
+function pmDrawAll() { drawScreen(); drawPill(); drawPomoHome(); pmTick(); }
+
+// ── every second: count down, update the numbers in place (no page re-render, so nothing jumps) ──
+const PM_TITLE = document.title;
+function pmTick() {
+  const left = pmLeft();
+  if (PM.running && left <= 0) return pmFinish();
+  const t = pmFmt(left);
+  document.querySelectorAll('[data-pm="time"]').forEach((e) => { if (e.textContent !== t) e.textContent = t; });
+  document.querySelectorAll('[data-pm="arc"]').forEach((e) => e.setAttribute('stroke-dashoffset', String((+e.dataset.c * (1 - left / (PM.total || 1))).toFixed(1))));
+  let title = PM_TITLE;
+  if ((PM.screen === 'focusDone' || PM.screen === 'breakDone') && document.hidden) title = Date.now() % 2000 < 1000 ? (PM.screen === 'focusDone' ? '⏰ Focus done!' : '⏰ Break’s over!') : PM_TITLE;
+  else if (PM.running) title = `${t} · ${PM.mode === 'focus' ? 'Focus' : 'Break'} · 3nc0de`;
+  else if (PM.started) title = `⏸ ${t} · 3nc0de`;
+  if (document.title !== title) document.title = title;
+}
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'pmNb') { PM.nb = e.target.value; pmSave(); drawPomoHome(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && PM.screen) pmCloseScreen(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pmTick(); });
+window.addEventListener('storage', (e) => { if (e.key === PM_KEY) { PM = { ...pmFresh('focus'), ...(pmRead(PM_KEY) || {}) }; pmDrawAll(); } }); // other tabs stay in sync
+function pomoInit() {
+  if (PM.screen === 'control') PM.screen = '';
+  if (!PM.started && !PM.running) { const d = pmDur(PM.mode); if (PM.total !== d) { PM.total = d; PM.left = d; } }
+  pmDrawAll(); clearInterval(UI.pmI);
+  setTimeout(() => { pmTick(); UI.pmI = setInterval(pmTick, 1000); }, 1000 - (Date.now() % 1000));
+}
+
+// settings section
+function pomoSettingsHTML() {
+  const num = (k, label, min, max) => `<label class="field"><span>${label}</span><input type="number" inputmode="numeric" min="${min}" max="${max}" step="1" data-pmc="${k}" value="${PMC[k]}"></label>`;
+  return `<h3>⏳ Focus timer</h3>
+    <div class="pm-set">${num('focus', 'Focus (min)', 1, 120)}${num('short', 'Short break', 1, 60)}${num('long', 'Long break', 1, 60)}${num('every', 'Long break every', 2, 8)}</div>
+    <div class="small muted">“Long break every” counts focus blocks (4 means a long break after every 4th).</div>
+    <div class="stack" style="margin-top:8px">
+      <label class="check small"><input type="checkbox" data-pmc="sound" ${PMC.sound ? 'checked' : ''}> Play a chime when time’s up</label>
+      <label class="check small"><input type="checkbox" data-pmc="auto" ${PMC.auto ? 'checked' : ''}> Start breaks automatically</label>
+      ${'Notification' in window ? `<label class="check small"><input type="checkbox" data-pmc="notify" ${PMC.notify ? 'checked' : ''}> Show a notification when time’s up and you’re in another tab</label>` : ''}
+    </div>`;
+}
+document.addEventListener('change', async (e) => {
+  const k = e.target.dataset?.pmc; if (!k) return;
+  if (e.target.type === 'checkbox') {
+    PMC[k] = e.target.checked;
+    if (k === 'notify' && PMC.notify && 'Notification' in window && Notification.permission !== 'granted') {
+      const p = await Notification.requestPermission().catch(() => 'denied');
+      if (p !== 'granted') { PMC.notify = false; e.target.checked = false; toast('Notifications are blocked for this site in your browser settings'); }
+    }
+    if (k === 'sound' && PMC.sound) { pmAudio(); pmChime(true); }
+  } else {
+    const lim = { focus: [1, 120], short: [1, 60], long: [1, 60], every: [2, 8] }[k];
+    const v = Math.min(lim[1], Math.max(lim[0], Math.round(+e.target.value || PMC[k]))); PMC[k] = v; e.target.value = v;
+    if (!PM.started) { PM.total = pmDur(PM.mode); PM.left = PM.total; pmSave(); }
+  }
+  pmWrite(PMC_KEY, PMC); pmDrawAll();
+});
+
 // ═════════════════════════ SETTINGS ═════════════════════════
 function openSettings() {
   const st = S.status;
@@ -2332,6 +2949,8 @@ function openSettings() {
     <div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="save-settings">Save</button></div>
     <hr style="border:0;border-top:1px solid var(--border)">
     ${lookSection()}
+    <hr style="border:0;border-top:1px solid var(--border)">
+    ${pomoSettingsHTML()}
     <hr style="border:0;border-top:1px solid var(--border)">
     <h3>Your data</h3><p class="small muted">Your notebooks, pictures and progress are saved privately in this browser on this device. Nobody else can see them, not even the site owner. Clearing this site’s data in your browser erases them, so export a backup now and then (you can import it on another device too).</p>
     <div class="row"><button class="btn" data-act="export">⬇️ Export backup</button><label class="btn" style="position:relative">⬆️ Import backup<input type="file" id="importIn" accept=".json" class="file-hidden"></label></div>
@@ -2379,6 +2998,7 @@ async function importData(e) {
     return;
   }
   render();
+  pomoInit();
   await migrateFromBrowser();
   await refreshStatus();
   render();
