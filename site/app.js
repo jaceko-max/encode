@@ -412,7 +412,7 @@ async function refreshStatus() {
 function renderTop() {
   applyTheme(); const rk = rankInfo();
   $('#topStats').innerHTML = `
-    <span class="chip" title="Study streak">${icon('flame').replace('class="ico"', 'class="ico flame"')} ${streak()}</span>
+    <span class="chip" title="Study streak">${icon('flame', 'flame')} ${streak()}</span>
     <a class="chip rank-chip" href="#/profile" title="${S.meta.xp} XP · your rank and profile">${emblem(rk.i, 16)} ${esc(rk.label)} <span class="bar"><i style="width:${rk.next ? pct(rk.into / rk.need) : 100}%"></i></span></a>`;
 }
 function renderBanner() {
@@ -711,7 +711,7 @@ if (LOOK.own?.kind === 'upload') loadOwn(); // so its preview is ready in Settin
 // Donation note on the home page (email assembled at runtime so simple scrapers don't pick it up).
 const DONATE_TO = ['kojace263', 'gmail.com'].join('@');
 function donateCard() {
-  return `<div class="card donate"><span class="donate-ico">☕</span>
+  return `<div class="card donate"><span class="donate-ico">${icon('coffee')}</span>
     <div class="spacer"><b>Help keep Etch free</b><div class="small muted">The AI costs real money to run. If Etch helps you study, please donate $1 on Zelle to <b class="donate-to">${DONATE_TO}</b>. <span style="white-space:nowrap">Thank you! – Ko</span></div></div>
     <button class="btn sm" data-act="copy-donate">Copy email</button></div>`;
 }
@@ -739,26 +739,26 @@ function planSteps(nbs, single = false) {
   const steps = [];
   const withKit = nbs.filter((n) => n.digest && n.digest.cards?.length);
   const learnNb = withKit.find((n) => !lessonsDone(n));
-  if (learnNb) { const i = lessonNext(learnNb); steps.push({ icon: '🎓', label: `Learn: ${learnNb.digest.cards[i].title}`, sub: single ? `Section ${i + 1} of ${learnNb.digest.cards.length}` : learnNb.title, href: `#/nb/${learnNb.id}/lessons/${i}` }); }
-  else steps.push({ icon: '🎓', label: 'Learn', sub: withKit.length ? 'Every section learned ✓' : 'Add a lecture to start', done: !!withKit.length, ...(withKit.length ? {} : { act: 'new-nb' }) });
+  if (learnNb) { const i = lessonNext(learnNb); steps.push({ icon: 'lessons', label: `Learn: ${learnNb.digest.cards[i].title}`, sub: single ? `Section ${i + 1} of ${learnNb.digest.cards.length}` : learnNb.title, href: `#/nb/${learnNb.id}/lessons/${i}` }); }
+  else steps.push({ icon: 'lessons', label: 'Learn', sub: withKit.length ? 'Every section learned ✓' : 'Add a lecture to start', done: !!withKit.length, ...(withKit.length ? {} : { act: 'new-nb' }) });
   const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
-  steps.push(due ? { icon: '🧠', label: `Review ${due} due card${due > 1 ? 's' : ''}`, sub: `about ${Math.max(1, Math.round(due * 20 / 60))} min · spaced review`, ...(single ? { href: `#/nb/${nbs[0].id}/recall` } : { act: 'review-all' }) }
-    : { icon: '🧠', label: 'Reviews', sub: 'All caught up ✓', done: true });
+  steps.push(due ? { icon: 'recall', label: `Review ${due} due card${due > 1 ? 's' : ''}`, sub: `about ${Math.max(1, Math.round(due * 20 / 60))} min · spaced review`, ...(single ? { href: `#/nb/${nbs[0].id}/recall` } : { act: 'review-all' }) }
+    : { icon: 'recall', label: 'Reviews', sub: 'All caught up ✓', done: true });
   let teach = null;
   for (const nb of withKit) { for (const [i, L] of Object.entries(nb.lessons || {})) if (L?.done && !L.teach && nb.digest.cards[i] && L.title === nb.digest.cards[i].title) { teach = { nb, i: +i }; break; } if (teach) break; }
-  if (teach) steps.push({ icon: '🗣️', label: `Teach back: ${teach.nb.digest.cards[teach.i].title}`, sub: 'Explain it to a 12-year-old in 3 sentences', href: `#/nb/${teach.nb.id}/lessons/${teach.i}` });
+  if (teach) steps.push({ icon: 'teach', label: `Teach back: ${teach.nb.digest.cards[teach.i].title}`, sub: 'Explain it to a 12-year-old in 3 sentences', href: `#/nb/${teach.nb.id}/lessons/${teach.i}` });
   else {
     const examNb = withKit.find((n) => (n.lessons && Object.values(n.lessons).some((L) => L?.done)) && !(n.exams || []).some((x) => Date.now() - (x.at || x.date || 0) < 3 * 86400e3));
-    steps.push(examNb ? { icon: '📝', label: `Practice exam: ${examNb.title}`, sub: 'Mixed questions across the whole lecture', href: `#/nb/${examNb.id}/exam` }
-      : { icon: '🗣️', label: 'Teach back', sub: withKit.length ? 'Finish a section first' : 'Comes after learning', done: true, muted: true });
+    steps.push(examNb ? { icon: 'exam', label: `Practice exam: ${examNb.title}`, sub: 'Mixed questions across the whole lecture', href: `#/nb/${examNb.id}/exam` }
+      : { icon: 'teach', label: 'Teach back', sub: withKit.length ? 'Unlocks after you finish a section' : 'Unlocks after learning', done: true, muted: true });
   }
   return steps;
 }
 function planCardHTML(nbs) {
   const steps = planSteps(nbs); const first = steps.findIndex((s) => !s.done);
   return `<section class="section"><div class="card plan-card">
-    <div class="row between"><h2 style="margin:0">📋 Today’s plan</h2>${first >= 0 ? `<button class="btn primary" data-act="plan-go" data-n="${first}">Start: ${esc(steps[first].label.split(':')[0])} →</button>` : '<span class="tag good">All done for today ✓</span>'}</div>
-    <ol class="plan">${steps.map((s, n) => `<li class="${s.done ? 'done' : ''} ${s.muted ? 'muted' : ''}"><span class="plan-n">${s.muted ? '–' : s.done ? '✓' : n + 1}</span><span class="plan-ico">${s.icon}</span>
+    <div class="row between"><h2 style="margin:0">${hIcon('plan')}Today’s plan</h2>${first >= 0 ? `<button class="btn primary" data-act="plan-go" data-n="${first}">Start: ${esc(steps[first].label.split(':')[0])} →</button>` : '<span class="tag good">All done for today ✓</span>'}</div>
+    <ol class="plan">${steps.map((s, n) => `<li class="${s.done ? 'done' : ''} ${s.muted ? 'muted' : ''}"><span class="plan-n">${s.muted ? icon('lock') : s.done ? '✓' : n + 1}</span><span class="plan-ico">${icon(s.icon)}</span>
       <div class="plan-txt"><b>${esc(s.label)}</b><span class="small muted">${esc(s.sub)}</span></div>
       ${s.done ? '' : `<button class="btn sm" data-act="plan-go" data-n="${n}">Go</button>`}</li>`).join('')}</ol>
     <div class="small muted">Learn something new, then review what’s due (spaced recall), then explain it back.</div></div></section>`;
@@ -772,7 +772,7 @@ function nbPlanStrip(nb) {
   if (!nb.digest) return '';
   const steps = planSteps([nb], true).map((s, n) => ({ ...s, n })).filter((s) => !s.done);
   if (!steps.length) return '<div class="plan-strip"><span class="small muted">Today:</span> <span class="small">All done for this lecture ✓</span></div>';
-  return `<div class="plan-strip"><span class="small muted">Today:</span>${steps.map((s, k) => `${k ? '<span class="plan-arrow">→</span>' : ''}<button class="plan-chip ${k ? '' : 'first'}" data-act="plan-go" data-n="${s.n}">${s.icon} ${esc(s.label.length > 34 ? s.label.slice(0, 32) + '…' : s.label)}</button>`).join('')}</div>`;
+  return `<div class="plan-strip"><span class="small muted">Today:</span>${steps.map((s, k) => `${k ? '<span class="plan-arrow">→</span>' : ''}<button class="plan-chip ${k ? '' : 'first'}" data-act="plan-go" data-n="${s.n}">${icon(s.icon)}${esc(s.label.length > 34 ? s.label.slice(0, 32) + '…' : s.label)}</button>`).join('')}</div>`;
 }
 
 function renderHome() {
@@ -784,6 +784,8 @@ function renderHome() {
   // this calendar week, Sunday → Saturday (days still ahead are shown faded)
   const sun = new Date(); sun.setHours(12, 0, 0, 0); sun.setDate(sun.getDate() - sun.getDay());
   const week = [...Array(7)].map((_, i) => { const d = new Date(sun); d.setDate(sun.getDate() + i); return { k: dayKey(d), l: d.toLocaleDateString('en-US', { weekday: 'narrow' }), full: d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }), future: dayKey(d) > dayKey() }; });
+  const oneNb = new Set(weak.map((w) => w.nb.id)).size === 1;
+  const pastDays = week.filter((d) => !d.future); const studied = pastDays.filter((d) => S.meta.days[d.k]).length;
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
@@ -793,7 +795,7 @@ function renderHome() {
       ${clockHTML()}
       <h1>${greet}${prof().name ? `, ${esc(prof().name)}` : ''} 👋</h1>
       ${prof().name ? '' : '<a class="small hero-name-link" href="#/profile">Add your name and see your rank →</a>'}
-      ${nbs.length ? '<p class="muted" style="margin:0 0 4px">Your plan for today is below: learn, review, then teach it back.</p>'
+      ${nbs.length ? ''
         : '<p class="muted">Add a lecture, see it as pictures and maps, then pull it back out of your head. Retrieval is what makes it stick.</p>'}
       <p class="small muted" style="margin:-4px 0 12px;${nbs.length ? 'display:none' : ''}">🔒 Free, no account. Your notebooks stay private in this browser on this device. Back them up anytime in ⚙︎ Settings.</p>
       <div class="row">
@@ -810,12 +812,13 @@ function renderHome() {
       </ol></div>`}
     <div class="card" style="${nbs.length ? '' : 'display:none'}">
       <div class="stat-grid">
-        <div class="stat"><b>🔥 ${streak()}</b><span>day streak</span></div>
+        <div class="stat"><b>${icon('flame', 'flame')}${streak()}</b><span>day streak</span></div>
         <a class="stat rank-stat" href="#/profile"><b>${emblem(tierAt(S.meta.xp), 22)} ${esc(rankInfo().label)}</b><span>rank · ${S.meta.xp.toLocaleString()} XP</span></a>
         <div class="stat"><b>${due}</b><span>cards due</span></div>
         <div class="stat"><b>${avgM.length ? pct(avgM.reduce((a, b) => a + b, 0) / avgM.length) + '%' : '—'}</b><span>avg mastery</span></div>
       </div>
-      <div class="week" aria-label="This week">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''} ${d.future ? 'future' : ''}" title="${d.full}${d.future ? '' : `: ${S.meta.days[d.k] || 0} XP`}"><i></i>${d.l}</div>`).join('')}</div>
+      <div class="week-cap small muted"><span>This week</span><span>${studied} of ${pastDays.length} day${pastDays.length === 1 ? '' : 's'} studied</span></div>
+      <div class="week" aria-label="This week: ${studied} of ${pastDays.length} days studied">${week.map((d) => `<div class="d ${S.meta.days[d.k] ? 'on' : ''} ${d.k === dayKey() ? 'today' : ''} ${d.future ? 'future' : ''}" title="${d.full}${d.future ? '' : `: ${S.meta.days[d.k] || 0} XP`}"><i></i>${d.l}</div>`).join('')}</div>
     </div>
   </section>
   ${nbs.length ? planCardHTML(nbs) : ''}
@@ -827,22 +830,22 @@ function renderHome() {
       <div class="card empty"><div class="big">📚</div><h3>No notebooks yet</h3>
       <p class="muted" style="margin:0">One notebook per lecture or topic. Tap <b>＋ New notebook</b> above to start, or try the sample first.</p></div>`}
   </section>
+  ${weak.length ? `<section class="section"><h2>${hIcon('target')}Weak spots</h2><p class="muted small">Concepts you’ve missed most. Drilling these is the fastest way to raise your score.</p>
+    <div class="card flat bars">${weak.map((w) => `<div class="b"><div><b>${esc(w.c.name)}</b>${oneNb ? '' : `<div class="small muted">${esc(w.nb.title)}</div>`}</div>
+      <div class="meter ${lvl(w.m)}"><i style="width:${pct(w.m)}%"></i></div><span class="small">${pct(w.m)}%</span>
+      <a class="btn sm" href="#/nb/${w.nb.id}/recall/${w.c.id}">Drill</a></div>`).join('')}</div></section>` : ''}
   <section class="section" id="pomoHome">${UI.pmOpen ? pomoHomeHTML() : pomoBarHTML()}</section>
   ${S.status.public ? '<section class="section" id="homeLb"></section>' : ''}
   ${nbs.some((n) => n.digest) ? donateCard() : ''}
-
-  ${weak.length ? `<section class="section"><h2>🎯 Weak spots</h2><p class="muted small">Concepts you’ve missed most. Drilling these is the fastest way to raise your score.</p>
-    <div class="card flat bars">${weak.map((w) => `<div class="b"><div><b>${esc(w.c.name)}</b><div class="small muted">${esc(w.nb.title)}</div></div>
-      <div class="meter"><i style="width:${pct(w.m)}%"></i></div><span class="small">${pct(w.m)}%</span>
-      <a class="btn sm" href="#/nb/${w.nb.id}/recall/${w.c.id}">Drill</a></div>`).join('')}</div></section>` : ''}`;
+`;
 }
 function nbCard(nb) {
   const due = dueCards(nb).length; const step = nextStep(nb);
   return `<div class="card nb-card" data-act="open-nb" data-id="${nb.id}">
     <div class="row between"><span class="tag accent">${esc(nb.course || 'Lecture')}</span><span class="row" style="gap:6px">${due ? `<span class="tag warn">${due} due</span>` : ''}<button class="nb-del" data-act="del-nb" data-id="${nb.id}" title="Delete this notebook" aria-label="Delete ${esc(nb.title)}">${icon('trash')}</button></span></div>
     <h3>${esc(nb.title)}</h3>
-    <div class="meta"><span>📄 ${nb.sources.length} source${nb.sources.length === 1 ? '' : 's'}</span><span>🧠 ${nb.cards.length} cards</span><span>🎯 ${pct(nbMastery(nb))}% mastery</span></div>
-    <div class="meter"><i style="width:${pct(nbMastery(nb))}%"></i></div>
+    <div class="meta"><span>${icon('sources')}${nb.sources.length} source${nb.sources.length === 1 ? '' : 's'}</span><span>${icon('cards')}${nb.cards.length} cards</span><span>${icon('target')}${pct(nbMastery(nb))}% mastery</span></div>
+    <div class="meter ${lvl(nbMastery(nb))}"><i style="width:${pct(nbMastery(nb))}%"></i></div>
     <div class="small" style="color:var(--accent);font-weight:600">Next: ${esc(step.label)} →</div>
   </div>`;
 }
@@ -888,8 +891,19 @@ const ICON_PATHS = {
   tutor: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/>',
   exam: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="m9 13 2 2 4-4"/>',
   progress: '<path d="M3 20h18M7 16v-5M12 16V6M17 16v-8"/>',
+  plan: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/>',
+  cards: '<rect x="3" y="7" width="14" height="13" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/>',
+  trophy: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>',
+  coffee: '<path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 2v3M12 2v3"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
 };
-const icon = (k) => ICON_PATHS[k] ? `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[k]}</svg>` : '';
+const icon = (k, cls = '') => ICON_PATHS[k] ? `<svg class="ico${cls ? ' ' + cls : ''}" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[k]}</svg>` : '';
+const hIcon = (k) => icon(k, 'h-ico');
+// mastery → bar colour, so a weak 25% doesn't look the same as a solid 85%
+const lvl = (m) => (m < 0.5 ? 'lvl-low' : m < 0.75 ? 'lvl-mid' : 'lvl-high');
 
 // Small celebration for a strong session or a new level (skipped when "reduce motion" is on).
 function confetti() {
@@ -926,9 +940,9 @@ function nextStep(nb) { return pathSteps(nb).find((s) => !s.done) || { tab: dueC
 
 // Tabs grouped into the order you study in: learn it → practice it → everything else
 const STAGES = [
-  { k: 'learn', label: 'Learn', ico: '🎓', tabs: ['pretest', 'lessons', 'learn', 'videos'], home: 'lessons' },
-  { k: 'practice', label: 'Practice', ico: '🧠', tabs: ['recall', 'teach', 'exam'], home: 'recall' },
-  { k: 'more', label: 'More', ico: '⋯', tabs: ['sources', 'tutor', 'progress'], home: 'sources' },
+  { k: 'learn', label: 'Learn', ico: 'lessons', tabs: ['pretest', 'lessons', 'learn', 'videos'], home: 'lessons' },
+  { k: 'practice', label: 'Practice', ico: 'recall', tabs: ['recall', 'teach', 'exam'], home: 'recall' },
+  { k: 'more', label: 'More', ico: 'more', tabs: ['sources', 'tutor', 'progress'], home: 'sources' },
 ];
 const stageOf = (tab) => (tab === 'deep' ? STAGES[0] : STAGES.find((s) => s.tabs.includes(tab)) || STAGES[2]);
 const KIT_TABS = ['pretest', 'lessons', 'deep', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress'];
@@ -945,7 +959,7 @@ function renderNotebook(nb, tab, arg) {
     ${nbPlanStrip(nb)}
     <div class="tabs-bar">
       <div class="stage-row" role="tablist" aria-label="Study stage">${STAGES.map((sg, n) => { const on = stageOf(tab).k === sg.k; const target = sg.k === 'learn' && !sg.tabs.includes(next.tab) ? 'lessons' : sg.tabs.includes(next.tab) ? next.tab : sg.home;
-        return `<a href="#/nb/${nb.id}/${on ? tab : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${sg.ico} ${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
+        return `<a href="#/nb/${nb.id}/${on ? tab : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${icon(sg.ico)}${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
       <nav class="tabs">${TABS.filter(([k]) => stageOf(tab).tabs.includes(k)).sort((x, y) => stageOf(tab).tabs.indexOf(x[0]) - stageOf(tab).tabs.indexOf(y[0])).map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
     <div id="tab"></div>`;
   const tabsEl = $('.tabs');
@@ -3275,7 +3289,7 @@ function homeLbCard() {
     const h = $('#homeLb'); if (!h) return;
     const tab = UI.lbHomeTab || 'week'; const rows = tab === 'week' ? d.weekly : d.allTime;
     const scroller = h.querySelector('.lb-scroll'); const keep = scroller && UI.lbHomeTabShown === tab ? scroller.scrollTop : null;
-    h.innerHTML = `<div class="row between"><h2>🏆 Leaderboard</h2><a class="small" href="#/leaderboard">Full page →</a></div>
+    h.innerHTML = `<div class="row between"><h2>${hIcon('trophy')}Leaderboard</h2><a class="small" href="#/leaderboard">Full page →</a></div>
       <div class="card lb-home">
         <div class="row between lb-home-top"><div class="seg">${[['week', 'This week'], ['all', 'All time']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-act="lb-home-tab" data-v="${k}">${l}</button>`).join('')}</div>
           <span class="small muted">${rows.length} ${rows.length === 1 ? 'player' : 'players'}${tab === 'week' ? ` · resets in ${fmtUntil(d.resetsAt)}` : ''}</span></div>
@@ -3420,7 +3434,7 @@ const pmMain = (cls = 'btn primary') => (PM.running ? `<button class="${cls}" da
 function pomoHomeHTML() {
   const st = pmStats(); const nbs = [...S.notebooks].sort((a, b) => b.updated - a.updated);
   const nbMin = PM.nb ? st.nb[PM.nb] || 0 : 0;
-  return `<div class="row between"><h2>⏳ Focus timer</h2><span class="small muted">Round ${pmRound()} of ${PMC.every} ${pmDots()} · <a href="#" data-act="pomo-expand">Hide ▴</a></span></div>
+  return `<div class="row between"><h2>${hIcon('timer')}Focus timer</h2><span class="small muted">Round ${pmRound()} of ${PMC.every} ${pmDots()} · <a href="#" data-act="pomo-expand">Hide ▴</a></span></div>
   <div class="card pm-home mode-${PM.mode}">
     <div class="pm-home-ring">${pmRing(160, 11)}<div class="pm-center"><b data-pm="time">${pmFmt(pmLeft())}</b><span>${PM.running ? PM_LAB[PM.mode].toLowerCase() : PM.started ? 'paused' : PM_LAB[PM.mode].toLowerCase()}</span></div></div>
     <div class="pm-home-side">
@@ -3435,7 +3449,7 @@ function pomoHomeHTML() {
 function pomoBarHTML() {
   const st = pmStats();
   return `<div class="card pm-bar mode-${PM.mode}">
-    ${pmRing(40, 5)}<div class="pm-bar-txt"><b>⏳ Focus timer</b><span class="small muted"><span data-pm="time">${pmFmt(pmLeft())}</span> · ${PM.running ? PM_LAB[PM.mode].toLowerCase() : PM.started ? 'paused' : PM_LAB[PM.mode].toLowerCase()}${st.blocks ? ` · ${st.blocks} today` : ''}</span></div>
+    ${pmRing(40, 5)}<div class="pm-bar-txt"><b>${icon('timer')}Focus timer</b><span class="small muted"><span data-pm="time">${pmFmt(pmLeft())}</span> · ${PM.running ? PM_LAB[PM.mode].toLowerCase() : PM.started ? 'paused' : PM_LAB[PM.mode].toLowerCase()}${st.blocks ? ` · ${st.blocks} today` : ''}</span></div>
     ${pmMain('btn sm primary')}<button class="btn sm ghost" data-act="pomo-expand" aria-label="Show timer options"><span class="hide-sm">Options </span>▾</button></div>`;
 }
 ACT['pomo-expand'] = () => { UI.pmOpen = !UI.pmOpen; drawPomoHome(); };

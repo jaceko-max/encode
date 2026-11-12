@@ -272,8 +272,8 @@ button.shot-empty:hover { border-color: var(--accent); color: var(--accent); }
   .split { grid-template-columns: 1fr; }
   .top-stats .chip.hide-sm { display: none; }
   .msg { max-width: 92%; }
-  .bars .b { grid-template-columns: 1fr 1fr 44px; }
-  .bars .b .btn { display: none; }
+  .bars .b { grid-template-columns: minmax(0, 1fr) 64px 36px auto; gap: 8px; }
+  .bars .b .btn { padding-left: 10px; padding-right: 10px; }
   h1 { font-size: 1.4rem; }
 }
 .toast { display: flex; gap: 12px; align-items: center; pointer-events: auto; }
@@ -976,7 +976,8 @@ html.pm-open { overflow: hidden; }
   .plan-card { gap: 8px; }
   .plan-card > .small.muted, .plan-card > .row.between .btn.primary { display: none; }
   .plan li { padding: 8px 10px; gap: 8px; }
-  .plan li.done .plan-txt .small, .plan li.muted .plan-txt .small { display: none; }
+  .plan li.done:not(.muted) .plan-txt .small { display: none; }
+  .plan-txt b { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .hero .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
   .hero .stat-grid .stat { padding: 8px 4px; text-align: center; }
   .hero .stat-grid .stat b { font-size: .92rem; display: block; line-height: 1.2; }
@@ -1005,3 +1006,27 @@ html.pm-open { overflow: hidden; }
 .deep-q textarea { width: 100%; }
 .scard .deep-link { justify-self: start; margin-top: auto; }
 @media (max-width: 620px) { .deep-pic { grid-template-columns: 1fr; } }
+
+/* ═════════════ anti-ui-slop pass (Nov 12): one icon language, meaningful colour ═════════════ */
+h2 .h-ico, h1 .h-ico { width: 20px; height: 20px; color: #3dd6f5; vertical-align: -3px; margin-right: 8px; }
+.plan-ico { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; flex: none;
+  color: #3dd6f5; background: color-mix(in srgb, #3dd6f5 10%, transparent); font-size: inherit; }
+.plan-ico .ico { width: 17px; height: 17px; }
+.plan li.muted { opacity: .7; border-style: dashed; }
+.plan li.muted .plan-n { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.plan li.muted .plan-n .ico { width: 13px; height: 13px; }
+.plan li.muted .plan-ico { color: var(--muted); background: var(--surface); }
+.plan-chip { display: inline-flex; align-items: center; gap: 6px; }
+.plan-chip .ico { width: 14px; height: 14px; color: #3dd6f5; }
+.stage .ico { width: 15px; height: 15px; }
+.stat .ico.flame { width: 18px; height: 18px; color: #ff9f43; margin-right: 4px; vertical-align: -2px; }
+.nb-card .meta span { display: inline-flex; align-items: center; gap: 5px; }
+.nb-card .meta .ico { width: 14px; height: 14px; color: var(--muted); }
+.donate-ico { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; color: #3dd6f5; background: color-mix(in srgb, #3dd6f5 10%, transparent); }
+.donate-ico .ico { width: 22px; height: 22px; }
+.pm-bar-txt b { display: inline-flex; align-items: center; gap: 6px; }
+.pm-bar-txt b .ico { width: 15px; height: 15px; color: #3dd6f5; }
+.week-cap { display: flex; justify-content: space-between; margin-top: 12px; font-size: .74rem; }
+.meter.lvl-low i { background: #f87171; }
+.meter.lvl-mid i { background: #fbbf24; }
+.meter.lvl-high i { background: #4ade80; }
