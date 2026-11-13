@@ -1850,8 +1850,8 @@ function stepPicHTML(nb, i, L, j) {
   if (o?.slide) {
     const sh = refShots(nb, [o.slide])[0];
     if (sh) { (UI.shots ||= {})[`lstep${i}_${j}`] = [sh];
-      return `<figure class="step-pic" id="stepPic"><button class="step-pic-img" data-act="zoom-shot" data-key="lstep${i}_${j}" data-k="0" aria-label="Enlarge"><img src="${sh.src}" alt="${esc(sh.kind === 'pdf' ? 'Page' : 'Slide')} ${sh.n}"></button>
-        ${look}<div class="step-pic-src"><span>From your ${sh.kind === 'pdf' ? 'page' : 'slide'} ${sh.n}</span><button class="linklike" data-act="step-pic-hide" data-j="${j}">Hide</button></div></figure>`; }
+      return `<figure class="step-pic" id="stepPic"><button class="step-pic-img" data-act="zoom-shot" data-key="lstep${i}_${j}" data-k="0" aria-label="Enlarge"><img src="${TRIMMED.get(sh.src) || sh.src}" data-trim="${TRIMMED.has(sh.src) ? '' : '1'}" alt=""${esc(sh.kind === 'pdf' ? 'Page' : 'Slide')} ${sh.n}"></button>
+        ${look}<div class="step-pic-src"><span>From your ${sh.kind === 'pdf' ? 'page' : 'slide'} ${sh.n} · tap to enlarge</span><button class="linklike" data-act="step-pic-hide" data-j="${j}">Hide</button></div></figure>`; }
   }
   const w = o?.alts?.[o.at || 0];
   if (w) {
@@ -1885,6 +1885,38 @@ ACT['zoom-web'] = (el) => {
     ${o.look ? `<p class="small" style="margin:10px 0 0">👀 ${esc(o.look)}</p>` : ''}
     <div class="row" style="justify-content:space-between;margin-top:10px">${w.page && WEB_IMG.test(w.page) ? `<a class="small" href="${esc(w.page)}" target="_blank" rel="noopener noreferrer">Source${w.by ? `: ${esc(w.by)}` : ''}${w.license ? ` (${esc(w.license)})` : ''}</a>` : '<span></span>'}<button class="btn" data-act="close-modal">Close</button></div>`);
 };
+// Slide pictures often sit in a sea of white (a tall figure on a wide slide): crop the empty margins so the
+// figure itself fills the box. Slides are local data: URLs, so reading their pixels is allowed.
+const TRIMMED = new Map();
+function trimSlide(img) {
+  const W = img.naturalWidth, H = img.naturalHeight; if (!W || !H) return null;
+  const s = Math.min(1, 400 / Math.max(W, H)); const w = Math.max(1, Math.round(W * s)), h = Math.max(1, Math.round(H * s));
+  const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, w, h); const px = g.getImageData(0, 0, w, h).data;
+  const at = (x, y) => { const k = (y * w + x) * 4; return [px[k], px[k + 1], px[k + 2]]; };
+  const bg = [at(0, 0), at(w - 1, 0), at(0, h - 1), at(w - 1, h - 1)].reduce((a, b) => a.map((v, n) => v + b[n] / 4), [0, 0, 0]);
+  const off = (x, y) => { const p = at(x, y); return Math.abs(p[0] - bg[0]) + Math.abs(p[1] - bg[1]) + Math.abs(p[2] - bg[2]) > 60; };
+  const rowHas = (y) => { let n = 0; for (let x = 0; x < w; x++) if (off(x, y)) n++; return n > w * 0.004; };
+  const colHas = (x) => { let n = 0; for (let y = 0; y < h; y++) if (off(x, y)) n++; return n > h * 0.004; };
+  let t0 = 0, b0 = h - 1, l0 = 0, r0 = w - 1;
+  while (t0 < b0 && !rowHas(t0)) t0++; while (b0 > t0 && !rowHas(b0)) b0--;
+  while (l0 < r0 && !colHas(l0)) l0++; while (r0 > l0 && !colHas(r0)) r0--;
+  const pad = Math.round(Math.max(w, h) * 0.02);
+  t0 = Math.max(0, t0 - pad); l0 = Math.max(0, l0 - pad); b0 = Math.min(h - 1, b0 + pad); r0 = Math.min(w - 1, r0 + pad);
+  const cw = r0 - l0 + 1, ch = b0 - t0 + 1;
+  if (cw * ch > w * h * 0.8 || cw < w * 0.1 || ch < h * 0.1) return null; // little to gain, or it found nothing sensible
+  const X = Math.floor(l0 / s), Y = Math.floor(t0 / s), CW = Math.ceil(cw / s), CH = Math.ceil(ch / s);
+  const k = Math.min(1, 1600 / Math.max(CW, CH)); const out = document.createElement('canvas');
+  out.width = Math.round(CW * k); out.height = Math.round(CH * k);
+  const o = out.getContext('2d'); o.fillStyle = '#fff'; o.fillRect(0, 0, out.width, out.height);
+  o.drawImage(img, X, Y, CW, CH, 0, 0, out.width, out.height);
+  return out.toDataURL('image/jpeg', 0.9);
+}
+document.addEventListener('load', (e) => {
+  const img = e.target; if (!(img instanceof HTMLImageElement) || img.dataset.trim !== '1') return;
+  img.dataset.trim = ''; const orig = img.src;
+  try { const cut = trimSlide(img); TRIMMED.set(orig, cut || orig); if (cut) img.src = cut; } catch { TRIMMED.set(orig, orig); }
+}, true);
 // a web picture that won't load falls back to its thumbnail, then hides itself
 document.addEventListener('error', (e) => {
   const img = e.target; if (!(img instanceof HTMLImageElement) || !img.closest?.('.step-pic')) return;
