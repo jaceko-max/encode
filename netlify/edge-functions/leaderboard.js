@@ -37,6 +37,15 @@ function cleanName(raw) {
   return { name: n };
 }
 const num = (x) => (Number.isFinite(+x) ? Math.max(0, Math.floor(+x)) : 0);
+// new players per visitor: stops one person flooding the board with fake entries (per edge instance)
+const NEW_IDS = new Map();
+function tooManyNew(request) {
+  const ip = request.headers.get('x-nf-client-connection-ip') || request.headers.get('x-forwarded-for') || 'anon';
+  const now = Date.now(); const h = NEW_IDS.get(ip) || { n: 0, t: now };
+  if (now - h.t > 600000) { h.n = 0; h.t = now; }
+  h.n++; NEW_IDS.set(ip, h); return h.n > 5;
+}
+const daysBetween = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 86400e3);
 
 async function allPlayers(store) {
   const { blobs } = await store.list({ prefix: 'p/' });
@@ -46,8 +55,9 @@ async function allPlayers(store) {
 async function rollWeek(store, players, wk) { // close out finished weeks: keep the top 3 as champions
   const meta = (await store.get('meta', { type: 'json' })) || { week: wk, champions: [] };
   if (meta.week && meta.week !== wk) {
-    const top = players.filter((p) => p.weekKey === meta.week && p.weekXp > 0).sort((a, b) => b.weekXp - a.weekXp).slice(0, 3)
-      .map((p) => ({ name: p.name, xp: p.weekXp, h: p.h }));
+    const xpFor = (p) => (p.weekKey === meta.week ? p.weekXp : p.lastWeek?.key === meta.week ? p.lastWeek.xp : 0);
+    const top = players.map((p) => ({ ...p, wxp: xpFor(p) })).filter((p) => p.wxp > 0).sort((a, b) => b.wxp - a.wxp).slice(0, 3)
+      .map((p) => ({ name: p.name, xp: p.wxp, h: p.h }));
     if (top.length) meta.champions = [{ week: meta.week, top }, ...(meta.champions || [])].slice(0, 12);
     meta.week = wk; await store.setJSON('meta', meta);
   } else if (!meta.week) { meta.week = wk; await store.setJSON('meta', meta); }
@@ -85,17 +95,29 @@ export default async (request) => {
     const nm = cleanName(body.name); if (nm.err) return json({ error: nm.err }, 400);
     const h = await sha(body.id); const key = 'p/' + h;
     const prev = await store.get(key, { type: 'json' });
-    const t = now.getTime();
-    if (prev && t - (prev.updated || 0) < MIN_GAP_MS && prev.name === nm.name) return json({ ok: true, total: prev.total, weekXp: prev.weekKey === wk ? prev.weekXp : 0 });
-    // keep scores believable: a capped amount per day since the last update
-    const days = prev ? Math.max(1, Math.ceil((t - (prev.updated || t)) / 86400e3)) : 0;
-    const maxTotal = prev ? prev.total + DAY_CAP * days + 200 : FIRST_JOIN_CAP;
-    const total = Math.min(num(body.total), maxTotal);
-    // this week's XP = the days from Sunday on (each day capped)
-    let weekXp = 0;
-    for (const [d, xp] of Object.entries(body.days || {})) if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= wk && d <= nyDate(new Date(t + 86400e3))) weekXp += Math.min(num(xp), DAY_CAP);
-    weekXp = Math.min(weekXp, total);
-    const rec = { name: nm.name, total, weekKey: wk, weekXp, updated: t, created: prev?.created || t };
+    const t = now.getTime(); const today = nyDate(now);
+    if (prev && t - (prev.updated || 0) < MIN_GAP_MS) return json({ ok: true, throttled: true, retryIn: MIN_GAP_MS - (t - (prev.updated || 0)), total: prev.total, weekXp: prev.weekKey === wk ? prev.weekXp : 0 });
+    if (!prev && tooManyNew(request)) return json({ error: 'Too many new players from here. Try again later.' }, 429);
+    // what the browser says it earned this week (each day capped) — only used as an upper bound
+    let claimedWeek = 0;
+    for (const [d, xp] of Object.entries(body.days || {})) if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d >= wk && d <= today) claimedWeek += Math.min(num(xp), DAY_CAP);
+    const claimedToday = Math.min(num((body.days || {})[today]), DAY_CAP);
+    let total, weekXp, dayXp;
+    if (!prev) {
+      total = Math.min(num(body.total), FIRST_JOIN_CAP);
+      weekXp = Math.min(claimedWeek, DAY_CAP, total); dayXp = Math.min(claimedToday, DAY_CAP);
+    } else {
+      // XP added since the last update, limited to a real day's worth per calendar day (bursts within a day are fine)
+      const prevDay = nyDate(new Date(prev.updated || t)); const gapDays = Math.min(7, Math.max(0, daysBetween(prevDay, today)));
+      const usedToday = gapDays === 0 ? (prev.dayXp || 0) : 0;
+      const allowance = gapDays === 0 ? Math.max(0, DAY_CAP - usedToday) : DAY_CAP * gapDays;
+      const delta = Math.min(Math.max(0, num(body.total) - prev.total), allowance);
+      total = prev.total + delta;
+      dayXp = usedToday + (gapDays === 0 ? delta : Math.min(delta, DAY_CAP));
+      weekXp = prev.weekKey === wk ? prev.weekXp + delta : Math.min(delta, claimedWeek);
+    }
+    const rec = { name: nm.name, total, weekKey: wk, weekXp, dayXp, updated: t, created: prev?.created || t,
+      lastWeek: prev && prev.weekKey !== wk ? { key: prev.weekKey, xp: prev.weekXp } : prev?.lastWeek };
     await store.setJSON(key, rec);
     return json({ ok: true, total, weekXp, clamped: total < num(body.total) });
   }

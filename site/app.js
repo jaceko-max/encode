@@ -167,6 +167,7 @@ async function saveMeta() { await DB.put('meta', S.meta); pushSummary(); }
 // Small study snapshot for Jace's Dashboard (it can't read this browser's storage itself).
 let summaryTimer = null;
 function pushSummary() {
+  if (S.status?.public) return; // the web version has no dashboard to send this to
   clearTimeout(summaryTimer);
   summaryTimer = setTimeout(() => {
     const nbs = [...S.notebooks].sort((a, b) => dueCards(b).length - dueCards(a).length || b.updated - a.updated);
@@ -275,6 +276,12 @@ function streak() {
   while (S.meta.days[dayKey(d)]) { n++; d.setDate(d.getDate() - 1); }
   return n;
 }
+// Repeating the same exercise on the same day only earns XP if you beat your earlier score (stops XP farming).
+function xpGain(nb, key, amount) {
+  const day = dayKey(); const log = (nb.xpLog && nb.xpLog.day === day) ? nb.xpLog : (nb.xpLog = { day, best: {} });
+  const prev = log.best[key] || 0; if (amount <= prev) return 0;
+  log.best[key] = amount; return amount - prev;
+}
 async function gainXP(n, label) {
   if (!n) return;
   const before = tierAt(S.meta.xp); const k = dayKey();
@@ -363,7 +370,11 @@ function ankiNext(card, btn, now = Date.now(), fuzz = false) {
     return { ...s, state: 'relearn', step: 0, lapses: (s.lapses || 0) + 1, ease: Math.max(ANKI.minEase, s.ease - 0.2),
       lapseIvl: Math.max(ANKI.minIvl, Math.round(ivl * ANKI.newIvlMult)), interval: 0, due: now + ANKI.relearn[0] * MIN, last: now };
   }
-  const base = early ? Math.max(ivl, elapsed) : ivl; // reviewing early (cramming) doesn't inflate the gap
+  if (early) { // reviewing before it's due (cramming): keep the schedule, just push the due date out a little if needed
+    const keep = { ...s, last: now, due: Math.max(s.due || now, now + Math.max(1, Math.min(ivl, elapsed * (btn === 'hard' ? 1 : s.ease))) * DAY) };
+    return btn === 'hard' ? { ...keep, ease: Math.max(ANKI.minEase, s.ease - 0.15) } : btn === 'easy' ? { ...keep, ease: s.ease + 0.05 } : keep;
+  }
+  const base = ivl;
   const hard = Math.max(ivl + 1, base * ANKI.hardMult);
   const good = Math.max(hard + 1, early ? Math.max(ivl, elapsed * s.ease) : (ivl + late / 2) * s.ease);
   const easy = Math.max(good + 1, early ? Math.max(ivl, elapsed * s.ease * ANKI.easyBonus) : (ivl + late) * s.ease * ANKI.easyBonus);
@@ -431,14 +442,23 @@ function toast(text, kind = '', action = null) {
   $('#toasts').appendChild(el); setTimeout(() => el.remove(), action ? 9000 : kind === 'err' ? 6000 : 2600);
 }
 function modal(html, wide = false) {
-  const m = $('#modal'); m.innerHTML = `<div class="box ${wide ? 'wide' : ''}">${html}</div>`; m.classList.remove('hidden');
+  const m = $('#modal'); const wasOpen = !m.classList.contains('hidden');
+  if (!wasOpen) UI.modalReturn = document.activeElement; // put focus back here when it closes
+  m.innerHTML = `<div class="box ${wide ? 'wide' : ''}">${html}</div>`; m.classList.remove('hidden');
+  document.documentElement.classList.add('modal-open'); // the page behind doesn't scroll
+  if (!wasOpen) setTimeout(() => { if (!m.contains(document.activeElement)) m.querySelector('input:not([type=hidden]), textarea, select, button')?.focus({ preventScroll: true }); }, 30);
   return m;
 }
-function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; }
+function closeModal() {
+  const m = $('#modal'); if (m.classList.contains('hidden')) return;
+  m.classList.add('hidden'); m.innerHTML = ''; document.documentElement.classList.remove('modal-open');
+  try { UI.modalReturn?.focus?.({ preventScroll: true }); } catch { /* element gone */ } UI.modalReturn = null;
+}
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
-  if (e.key === 'Enter' && !e.shiftKey && e.target.matches?.('#modal input[type=text], #modal input:not([type])')) {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('.nb-card[tabindex]')) { e.preventDefault(); ACT['open-nb'](e.target); }
+  if (e.key === 'Enter' && !e.shiftKey && e.target.matches?.('#modal input[type=text], #modal input[type=password], #modal input:not([type])')) {
     const btn = $('#modal .btn.primary'); if (btn) { e.preventDefault(); btn.click(); }
   }
 });
@@ -466,32 +486,72 @@ function pickAnchor(view) {
   return null;
 }
 function findAnchor(view, a) { return (a.id && document.getElementById(a.id)) || view.querySelectorAll(ANCHOR_SEL)[a.i] || null; }
+// When you scroll, the page must never fight you. LAST_SCROLL marks when the page last moved; a re-render that happens
+// while you're scrolling (or during iPhone momentum after your finger lifts) doesn't touch the scroll position at all.
+let LAST_SCROLL = 0;
+const HOVER = (() => { try { return matchMedia('(hover: hover)').matches; } catch { return false; } })();
+window.addEventListener('scroll', () => {
+  LAST_SCROLL = performance.now();
+  if (!HOVER) return;
+  // no hover "lift" effects while the page is moving (stops cards jumping under a still mouse)
+  if (!document.documentElement.classList.contains('scrolling')) document.documentElement.classList.add('scrolling');
+  clearTimeout(UI.scrollEndT); UI.scrollEndT = setTimeout(() => document.documentElement.classList.remove('scrolling'), 160);
+}, { passive: true });
 function render() {
   const key = location.hash; const same = key === lastRenderKey; lastRenderKey = key;
   const view = $('#view');
-  if (!same || !view) return renderPage();
+  if (!same || !view) { clearTimeout(UI.holdT); UI.anchorStop?.(); UI.anchorStop = null; if (view) view.style.minHeight = ''; return renderPage(); }
+  steady(view, renderPage);
+}
+// Let go of the page's held height only when that can't pull the page up under you (e.g. while the AI is
+// still thinking and the card is shorter than before). Otherwise try again a little later.
+function releaseHold(view) {
+  clearTimeout(UI.holdT);
+  if (!view.isConnected || !view.style.minHeight) return;
+  const held = view.style.minHeight; const y = window.scrollY;
+  view.style.minHeight = '';
+  if (window.scrollY < y - 1) { view.style.minHeight = held; window.scrollTo(0, y); UI.holdT = setTimeout(() => releaseHold(view), 1500); }
+}
+function steady(view, draw) {
   const y = window.scrollY; const anchor = pickAnchor(view);
-  view.style.minHeight = view.offsetHeight + 'px'; clearTimeout(UI.holdT); UI.anchorStop?.();
-  try { renderPage(); } finally {
-    const fix = () => { const el = anchor && findAnchor(view, anchor); if (!el) return; const d = el.getBoundingClientRect().top - anchor.top; if (Math.abs(d) > 1) window.scrollBy(0, d); };
-    if (anchor) fix(); else if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
-    // keep the card steady while pictures/maps above it finish loading, until you scroll yourself
-    let live = true; const ro = 'ResizeObserver' in window ? new ResizeObserver(() => live && fix()) : null; ro?.observe(view);
-    const onLoad = () => live && fix(); view.addEventListener('load', onLoad, true);
-    const stop = () => { if (!live) return; live = false; ro?.disconnect(); view.removeEventListener('load', onLoad, true); ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.removeEventListener(ev, stop)); };
-    ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.addEventListener(ev, stop, { passive: true }));
-    [30, 120, 300, 700, 1400].forEach((ms) => setTimeout(() => live && fix(), ms)); // maps and pictures that settle without a load event
-    UI.anchorStop = stop;
-    UI.holdT = setTimeout(() => { stop(); view.style.minHeight = ''; }, 2500);
+  view.style.minHeight = Math.max(view.offsetHeight, parseFloat(view.style.minHeight) || 0) + 'px'; clearTimeout(UI.holdT); UI.anchorStop?.();
+  const busyScrolling = performance.now() - LAST_SCROLL < 300;
+  try { draw(); } finally {
+    if (busyScrolling) { UI.holdT = setTimeout(() => releaseHold(view), 1200); } // you're scrolling: leave your position alone
+    else {
+      let expectY = window.scrollY;
+      const fix = () => { const el = anchor && findAnchor(view, anchor); if (!el) return; const d = el.getBoundingClientRect().top - anchor.top; if (Math.abs(d) > 1) { window.scrollBy(0, d); } expectY = window.scrollY; };
+      if (anchor) fix(); else if (Math.abs(window.scrollY - y) > 1) { window.scrollTo(0, y); expectY = window.scrollY; }
+      // keep the card steady while pictures/maps above it finish loading, until you scroll yourself
+      let live = true; const ro = 'ResizeObserver' in window ? new ResizeObserver(() => live && fix()) : null; ro?.observe(view);
+      const onLoad = () => live && fix(); view.addEventListener('load', onLoad, true);
+      // any scroll we didn't make ourselves (wheel, touch, momentum, scrollbar, keys) ends the steadying at once
+      const onScroll = () => { if (Math.abs(window.scrollY - expectY) > 2) stop(); };
+      const stop = () => { if (!live) return; live = false; ro?.disconnect(); view.removeEventListener('load', onLoad, true); window.removeEventListener('scroll', onScroll); ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.removeEventListener(ev, stop)); };
+      ['wheel', 'touchstart', 'keydown'].forEach((ev) => window.addEventListener(ev, stop, { passive: true }));
+      window.addEventListener('scroll', onScroll, { passive: true });
+      [30, 120, 300, 700, 1400].forEach((ms) => setTimeout(() => live && fix(), ms)); // maps and pictures that settle without a load event
+      UI.anchorStop = stop;
+      UI.holdT = setTimeout(() => { stop(); releaseHold(view); }, 2500);
+    }
   }
 }
+// Half-typed text survives any redraw (uploads finishing, XP toasts, pictures loading…)
+const DRAFT_SEL = '#guideText, #pasteName, #pasteText, #urlIn, [data-pre], [data-cr]';
+const draftKey = (el) => `${location.hash}|${el.id || (el.dataset.pre !== undefined ? 'pre' + el.dataset.pre : 'cr' + el.dataset.cr)}`;
+document.addEventListener('input', (e) => { if (e.target.matches?.(DRAFT_SEL)) (UI.drafts ||= {})[draftKey(e.target)] = e.target.value; });
+function restoreDrafts() { if (!UI.drafts) return; document.querySelectorAll(DRAFT_SEL).forEach((el) => { const v = UI.drafts[draftKey(el)]; if (v != null && !el.value) el.value = v; }); }
+function clearDraft(sel) { const el = typeof sel === 'string' ? document.querySelector(sel) : sel; if (el && UI.drafts) delete UI.drafts[draftKey(el)]; }
 function renderPage() {
+  try { renderPageInner(); } finally { restoreDrafts(); }
+}
+function renderPageInner() {
   renderTop();
   const r = route();
   if (r.view === 'nb') {
     const nb = getNb(r.id);
     if (!nb) return go('#/');
-    return renderNotebook(nb, r.tab || nextStep(nb).tab, r.arg);
+    return renderNotebook(nb, TABS.some(([k]) => k === r.tab) ? r.tab : nextStep(nb).tab, r.arg);
   }
   if (r.view === 'course') return go('#/'); // mixed-course review was removed; old links go home
   if (r.view === 'profile') return renderProfile();
@@ -841,7 +901,7 @@ function renderHome() {
 }
 function nbCard(nb) {
   const due = dueCards(nb).length; const step = nextStep(nb);
-  return `<div class="card nb-card" data-act="open-nb" data-id="${nb.id}">
+  return `<div class="card nb-card" data-act="open-nb" data-id="${esc(nb.id)}" role="link" tabindex="0" aria-label="Open ${esc(nb.title)}">
     <div class="row between"><span class="tag accent">${esc(nb.course || 'Lecture')}</span><span class="row" style="gap:6px">${due ? `<span class="tag warn">${due} due</span>` : ''}<button class="nb-del" data-act="del-nb" data-id="${nb.id}" title="Delete this notebook" aria-label="Delete ${esc(nb.title)}">${icon('trash')}</button></span></div>
     <h3>${esc(nb.title)}</h3>
     <div class="meta"><span>${icon('sources')}${nb.sources.length} source${nb.sources.length === 1 ? '' : 's'}</span><span>${icon('cards')}${nb.cards.length} cards</span><span>${icon('target')}${pct(nbMastery(nb))}% mastery</span></div>
@@ -957,6 +1017,7 @@ function renderNotebook(nb, tab, arg) {
       <button class="icon-btn quiet" data-act="del-nb" data-id="${nb.id}" title="Delete notebook" aria-label="Delete notebook">${icon('trash')}</button>
     </div>
     ${nbPlanStrip(nb)}
+    <div class="tabs-sentinel" aria-hidden="true"></div>
     <div class="tabs-bar">
       <div class="stage-row" role="tablist" aria-label="Study stage">${STAGES.map((sg, n) => { const on = stageOf(tab).k === sg.k; const target = sg.k === 'learn' && !sg.tabs.includes(next.tab) ? 'lessons' : sg.tabs.includes(next.tab) ? next.tab : sg.home;
         return `<a href="#/nb/${nb.id}/${on ? tab : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${icon(sg.ico)}${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
@@ -969,8 +1030,13 @@ function renderNotebook(nb, tab, arg) {
     if (on) { tabsEl.style.scrollBehavior = 'auto'; tabsEl.scrollLeft = Math.max(0, on.offsetLeft - (tabsEl.clientWidth - on.offsetWidth) / 2); tabsEl.style.scrollBehavior = ''; }
     fades(); tabsEl.addEventListener('scroll', fades, { passive: true });
     // solid strip behind the tabs once they're pinned under the header
-    UI.tabsIO?.disconnect(); const head = $('.nb-head'); const bar = tabsEl.parentElement;
-    if (head && bar && 'IntersectionObserver' in window) { UI.tabsIO = new IntersectionObserver(([e]) => bar.classList.toggle('stuck', !e.isIntersecting), { rootMargin: '-72px 0px 0px 0px' }); UI.tabsIO.observe(head); }
+    UI.tabsIO?.disconnect(); const bar = tabsEl.closest('.tabs-bar'); const mark = $('.tabs-sentinel');
+    const topbar = $('.topbar'); if (topbar) document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+    if (mark && bar && 'IntersectionObserver' in window) {
+      const pin = parseFloat(getComputedStyle(bar).top) || 56;
+      UI.tabsIO = new IntersectionObserver(([e]) => bar.classList.toggle('stuck', !e.isIntersecting && e.boundingClientRect.top < pin + 1), { rootMargin: `-${Math.round(pin) + 1}px 0px 0px 0px`, threshold: 0 });
+      UI.tabsIO.observe(mark);
+    }
   }
   $('#nbTitleEdit').addEventListener('change', async (e) => { nb.title = e.target.value.trim() || 'Untitled notebook'; await save(nb); });
   const needsKit = KIT_TABS.includes(tab) && !nb.digest;
@@ -1065,12 +1131,13 @@ function renderSources(nb, el) {
 const curNb = () => getNb(route().id);
 ACT['preview-src'] = (el) => { UI.preview = UI.preview === el.dataset.id ? null : el.dataset.id; render(); };
 ACT['del-src'] = async (el) => {
-  const nb = curNb(); const idx = nb.sources.findIndex((s) => s.id === el.dataset.id); const src = nb.sources[idx];
+  const nb = curNb(); const idx = nb.sources.findIndex((s) => s.id === el.dataset.id); if (idx < 0) return; const src = nb.sources[idx];
+  nb.sources.splice(idx, 1); VIS.delete(src.id); // remove first, so a second tap finds nothing to delete
   const vis = await DB.get('visuals', src.id).catch(() => null);
-  nb.sources.splice(idx, 1); VIS.delete(src.id); await save(nb); if (src.images) await DB.del('visuals', src.id).catch(() => {});
+  await save(nb); if (src.images) await DB.del('visuals', src.id).catch(() => {});
   render();
   toast(`Removed “${src.name}”`, '', { label: 'Undo', fn: async () => {
-    nb.sources.splice(idx, 0, src); if (vis?.items?.length) await putVisuals(src.id, vis.numbering, vis.items); await save(nb); render(); toast('Restored ✓');
+    if (nb.sources.some((s) => s.id === src.id)) return; nb.sources.splice(Math.min(idx, nb.sources.length), 0, src); if (vis?.items?.length) await putVisuals(src.id, vis.numbering, vis.items); await save(nb); render(); toast('Restored ✓');
   } });
 };
 async function addSource(nb, name, kind, text, extra = {}) {
@@ -1083,7 +1150,7 @@ async function addSource(nb, name, kind, text, extra = {}) {
   return src;
 }
 ACT['save-guide'] = async () => {
-  const nb = curNb(); const text = $('#guideText').value.trim();
+  const nb = curNb(); const text = $('#guideText').value.trim(); clearDraft('#guideText');
   const old = nb.sources.find((x) => x.kind === 'guide');
   if (!text) { if (old) { nb.sources = nb.sources.filter((x) => x !== old); await save(nb); toast('Study guide removed'); render(); } return; }
   if (old) { old.text = text; old.chars = text.length; old.added = Date.now(); await save(nb); }
@@ -1091,22 +1158,23 @@ ACT['save-guide'] = async () => {
   toast(nb.digest ? 'Saved. Rebuild the kit to focus it on the guide.' : 'Study guide saved ✓'); render();
 };
 ACT['add-paste'] = async () => {
-  const nb = curNb(); const text = $('#pasteText').value;
+  const nb = curNb(); const text = $('#pasteText').value; clearDraft('#pasteText'); clearDraft('#pasteName');
   if (!text.trim()) return toast('Paste some text first', 'err');
   await addSource(nb, $('#pasteName').value.trim() || 'Pasted notes', 'text', text); toast('Added'); render();
 };
 ACT['add-url'] = async (btn) => {
-  const nb = curNb(); const url = $('#urlIn').value.trim(); if (!url) return;
+  const nb = curNb(); const url = $('#urlIn').value.trim(); if (!url) return; clearDraft('#urlIn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Fetching…';
   try { const r = await api('/api/fetch', { url }); await addSource(nb, r.title, r.kind, r.text); toast('Link added'); }
   catch (e) { aiError(e); }
   render();
 };
 
+const ingestRender = (nb) => { const r = route(); if (r.view === 'nb' && r.id === nb.id && (r.tab || 'sources') === 'sources') render(); };
 async function ingestFiles(nb, files) {
   const useAI = $('#aiRead')?.checked && S.status.claude;
   UI.ingest = files.map((f) => ({ name: f.name, status: 'work', msg: 'reading…' }));
-  render();
+  ingestRender(nb);
   for (let i = 0; i < files.length; i++) {
     const f = files[i]; const item = UI.ingest[i];
     try {
@@ -1114,24 +1182,24 @@ async function ingestFiles(nb, files) {
       // Re-adding a deck that's already in the notebook only fills in its pictures (keeps the study kit as is).
       const existing = ['pdf', 'pptx'].includes(ext) && nb.sources.find((s) => s.name === f.name);
       if (existing) {
-        item.msg = 'pulling slide pictures…'; render();
+        item.msg = 'pulling slide pictures…'; ingestRender(nb);
         const numbering = existing.numbering || (ext === 'pptx' ? 'file' : 'page');
         const items = ext === 'pdf' ? (await pdfRead(await f.arrayBuffer(), true)).visuals : (await pptxRead(f)).visuals;
         await putVisuals(existing.id, numbering, items);
         existing.numbering = numbering; existing.images = items.length; await save(nb);
-        item.status = 'ok'; item.msg = `added ${items.length} slide picture${items.length === 1 ? '' : 's'}`; render();
+        item.status = 'ok'; item.msg = `added ${items.length} slide picture${items.length === 1 ? '' : 's'}`; ingestRender(nb);
         continue;
       }
       if (ext === 'pdf') {
         const buf = await f.arrayBuffer();
-        item.msg = 'reading pages…'; render();
+        item.msg = 'reading pages…'; ingestRender(nb);
         const { text, pages, visuals } = await pdfRead(buf.slice(0), true);
         const sparse = text.replace(/\[Page \d+\]/g, '').trim().length < pages * 60;
         let final = text;
         if ((useAI || sparse) && S.status.claude) {
-          if (f.size > 30e6) item.msg = 'too large for AI reading, using text only';
+          if (f.size > 14e6) item.msg = 'too large for AI reading, using text only';
           else {
-            item.msg = `AI reading ${pages} pages + diagrams…`; render();
+            item.msg = `AI reading ${pages} pages + diagrams…`; ingestRender(nb);
             try { final = (await ai('transcribe', { media_type: 'application/pdf', data: b64FromBuffer(buf) })).text; }
             catch (e) { if (sparse) throw e; item.msg = 'AI read failed, using text only'; }
           }
@@ -1140,7 +1208,7 @@ async function ingestFiles(nb, files) {
         await putVisuals(src.id, 'page', visuals);
         item.msg = `${pages} pages`;
       } else if (ext === 'pptx') {
-        item.msg = 'reading slides & pictures…'; render();
+        item.msg = 'reading slides & pictures…'; ingestRender(nb);
         const { text, visuals } = await pptxRead(f);
         const src = await addSource(nb, f.name, 'pptx', text, { numbering: 'order', images: visuals.length });
         await putVisuals(src.id, 'order', visuals);
@@ -1151,7 +1219,7 @@ async function ingestFiles(nb, files) {
         await addSource(nb, f.name, 'docx', await docxText(f));
       } else if (f.type.startsWith('image/') || /^(png|jpe?g|gif|webp|heic)$/.test(ext)) {
         if (!S.status.claude) throw new Error('Reading photos needs the AI tutor — see Settings');
-        item.msg = 'AI reading image…'; render();
+        item.msg = 'AI reading image…'; ingestRender(nb);
         const data = await imageToJpeg(f);
         const r = await ai('transcribe', { media_type: 'image/jpeg', data });
         const src = await addSource(nb, r.title || f.name, 'image', r.text, { numbering: 'page', images: 1 });
@@ -1161,9 +1229,9 @@ async function ingestFiles(nb, files) {
       }
       item.status = 'ok'; if (item.msg === 'reading…') item.msg = 'added';
     } catch (e) { item.status = 'err'; item.msg = e.message; if (e.code === 'no_key') openSettings(); }
-    render();
+    ingestRender(nb);
   }
-  setTimeout(() => { if (UI.ingest?.every((x) => x.status !== 'work')) { UI.ingest = UI.ingest.filter((x) => x.status === 'err'); render(); } }, 5000);
+  setTimeout(() => { if (UI.ingest?.every((x) => x.status !== 'work')) { UI.ingest = UI.ingest.filter((x) => x.status === 'err'); ingestRender(nb); } }, 5000);
 }
 
 // PDF: text per page + a picture of every page (that's what the lecture actually looks like).
@@ -1171,6 +1239,7 @@ async function pdfRead(buf, withPictures) {
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const doc = await pdfjsLib.getDocument({ data: buf }).promise;
   const out = []; const visuals = [];
+  try {
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const tc = await page.getTextContent();
@@ -1186,10 +1255,13 @@ async function pdfRead(buf, withPictures) {
         const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
         await page.render({ canvasContext: g, viewport: vp }).promise;
         visuals.push({ slide: i, file: i, src: c.toDataURL('image/jpeg', 0.78) });
+        c.width = c.height = 0; // release the canvas right away
       } catch (e) { console.warn('page render failed', i, e); }
     }
+    try { page.cleanup(); } catch { /* ignore */ }
   }
   return { text: out.join('\n\n'), pages: doc.numPages, visuals };
+  } finally { try { await doc.destroy(); } catch { /* ignore */ } }
 }
 function xmlDoc(xml) { return new DOMParser().parseFromString(xml, 'application/xml'); }
 function xmlParas(xml, pTag, tTag) {
@@ -1315,7 +1387,7 @@ ACT.build = async () => {
     UI.buildPics = images.length; const st = $('#buildStep'); if (st && images.length) st.textContent = `Reading your material + ${images.length} slide pictures…`;
     const d = await ai('digest', { sources: aiSources(nb), images });
     applyDigest(nb, d, map); await save(nb);
-    toast('Study kit ready ✨'); UI.building = null; go(`#/nb/${nb.id}/pretest`);
+    UI.building = null; if (route().view === 'nb' && route().id === nb.id) { toast('Study kit ready ✨'); go(`#/nb/${nb.id}/pretest`); } else toast(`Study kit ready for “${nb.title}” ✨`, '', { label: 'Open', fn: () => go(`#/nb/${nb.id}/pretest`) });
   } catch (e) { UI.building = null; aiError(e); render(); }
   clearInterval(UI.buildTimer);
 };
@@ -1341,6 +1413,30 @@ async function shrinkDataUrl(src, max, q) {
 }
 function applyDigest(nb, d, map = {}) {
   d.picture_questions ||= [];
+  // ids come from the AI and end up inside HTML attributes and links: keep them to safe characters
+  const SAFE = /^[A-Za-z0-9_-]{1,24}$/; const rid = {};
+  d.concepts.forEach((c, k) => { if (!SAFE.test(String(c.id))) { rid[c.id] = `c${k + 1}`; c.id = `c${k + 1}`; } });
+  const rc = (x) => rid[x] ?? x;
+  d.cards.forEach((c) => (c.concept_ids = (c.concept_ids || []).map(rc)));
+  [d.recall, d.pretest, d.feynman_prompts, d.picture_questions].forEach((list) => (list || []).forEach((r) => (r.concept_id = rc(r.concept_id))));
+  const nid = {}; (d.concept_map?.nodes || []).forEach((n, k) => { if (!SAFE.test(String(n.id))) { nid[n.id] = `n${k + 1}`; n.id = `n${k + 1}`; } });
+  (d.concept_map?.edges || []).forEach((e) => { e.from = nid[e.from] ?? e.from; e.to = nid[e.to] ?? e.to; });
+  // rebuilding: carry progress over to the same concepts by NAME (ids are just c1, c2… in lecture order)
+  if (nb.digest) {
+    const byName = new Map(nb.digest.concepts.map((c) => [norm(c.name), c.id]));
+    const o2n = {}; d.concepts.forEach((c) => { const o = byName.get(norm(c.name)); if (o) o2n[o] = c.id; });
+    const stats = {}; for (const [o, s] of Object.entries(nb.conceptStats || {})) if (o2n[o]) stats[o2n[o]] = s; nb.conceptStats = stats;
+    const ill = {};
+    for (const [k, v] of Object.entries(nb.illustrations || {})) {
+      const m = k.match(/^card(\d+):(.*)$/);
+      if (m) { const title = nb.digest.cards[+m[1]]?.title; const ni = d.cards.findIndex((c) => norm(c.title) === norm(title || '')); if (ni >= 0) ill[`card${ni}:${m[2]}`] = v; continue; }
+      const [cid, ...rest] = k.split(':'); if (o2n[cid]) ill[[o2n[cid], ...rest].join(':')] = v;
+    }
+    nb.illustrations = ill;
+    const fey = {}; for (const [k, v] of Object.entries(nb.feynman || {})) { const [cid, idx] = k.split(':'); const n = o2n[cid]; if (n && d.feynman_prompts?.[+idx]?.concept_id === n) fey[`${n}:${idx}`] = v; } nb.feynman = fey;
+    (nb.videos || []).forEach((v) => { v.concept_id = o2n[v.concept_id] || ''; });
+    nb.cards.forEach((c) => { if ((c.from === 'lesson' || c.from === 'deep') && c.concept_id) c.concept_id = o2n[c.concept_id] || d.concepts[0]?.id; });
+  }
   const toRefs = (ids) => (ids || []).map((id) => map[id]).filter(Boolean);
   d.cards.forEach((c) => (c.image_refs = toRefs(c.image_ids)));
   d.concepts.forEach((c) => (c.image_refs = toRefs(c.image_ids)));
@@ -1355,7 +1451,7 @@ function applyDigest(nb, d, map = {}) {
   const old = new Map(nb.cards.map((c) => [norm(c.question), c]));
   const kitCards = [...d.recall, ...pictureCards].map((r) => { const o = old.get(norm(r.question)); return o ? { ...o, ...r } : { id: uid(), ...r, srs: newSrs(), history: [] }; });
   const kitQs = new Set(kitCards.map((c) => norm(c.question)));
-  nb.cards = [...kitCards, ...nb.cards.filter((c) => c.from === 'lesson' && !kitQs.has(norm(c.question)))];
+  nb.cards = [...kitCards, ...nb.cards.filter((c) => (c.from === 'lesson' || c.from === 'deep') && !kitQs.has(norm(c.question)))];
   if (nb.title === 'Untitled notebook' || nb.sources.some((s) => s.name.replace(/\.[a-z0-9]+$/i, '') === nb.title)) nb.title = d.title;
   if (nb.digest) nb.pretest = { done: nb.pretest.done, answers: [] }; // rebuilding doesn't make you redo the pretest
   nb.digest = d; nb.builtAt = Date.now();
@@ -1386,10 +1482,10 @@ function renderPretest(nb, el) {
 }
 ACT['submit-pretest'] = async () => {
   const nb = curNb();
-  nb.pretest.answers = $$('[data-pre]').map((t) => t.value.trim());
+  nb.pretest.answers = $$('[data-pre]').map((t) => t.value.trim()); $$('[data-pre]').forEach(clearDraft);
   nb.pretest.done = true; await save(nb);
   const tried = nb.pretest.answers.filter((x) => x && wordCount(x) >= 2).length;
-  if (tried) await gainXP(4 * tried, 'pretest guesses'); else toast('No XP for a blank pretest. A wrong guess still helps you learn, so try one next time!');
+  const px = tried ? xpGain(nb, 'pretest', 4 * tried) : 0; if (px) { await save(nb); await gainXP(px, 'pretest guesses'); } else toast('No XP for a blank pretest. A wrong guess still helps you learn, so try one next time!');
   render();
 };
 ACT['skip-pretest'] = async () => { const nb = curNb(); nb.pretest.done = true; await save(nb); go(`#/nb/${nb.id}/lessons`); };
@@ -1403,6 +1499,8 @@ ACT['redo-pretest'] = async () => { const nb = curNb(); nb.pretest = { done: fal
 // The old all-at-once cards page is now the Revise tab.
 // Before writing a lesson or test, make sure we know whether the AI is on (right after a reload it may not be checked yet).
 async function aiReady() { if (!S.status.checked) { try { await refreshStatus(); } catch { /* offline */ } } return !!S.status.claude; }
+const onLesson = (nb, i) => { const r = route(); return r.view === 'nb' && r.tab === 'lessons' && r.id === nb.id && r.arg !== '' && +r.arg === i; };
+const onDeep = (nb, i) => { const r = route(); return r.view === 'nb' && r.tab === 'deep' && r.id === nb.id && r.arg !== '' && +r.arg === i; };
 const LESSON_V = 4; // v2 shorter; v3 harder checks + concept ids; v4 plain-words line, hints, fact-check pass
 function lessonOf(nb, i) {
   const L = (nb.lessons || {})[i]; const c = nb.digest?.cards[i];
@@ -1449,9 +1547,10 @@ ACT['paper-recall-done'] = async () => {
   const hits = c.points.map((_, j) => !!document.querySelector(`#lessonStage input[data-pp="${j}"]`)?.checked);
   UI.cardRecall[`${nb.id}:${i}`] = { revealed: true, text: '', hits, paper: true }; UI.paperRecall = null;
   const ratio = hits.filter(Boolean).length / c.points.length;
-  (c.concept_ids || []).forEach((cid) => record(nb, cid, ratio));
+  const rk = `${nb.id}:${i}:${dayKey()}`; if (!(UI.recordedRecall ||= new Set()).has(rk)) { UI.recordedRecall.add(rk); (c.concept_ids || []).forEach((cid) => record(nb, cid, ratio)); }
+  const xp = xpGain(nb, `recall:${i}`, 2 + 3 * hits.filter(Boolean).length);
   await save(nb); lessonShow(nb, i);
-  await gainXP(2 + 3 * hits.filter(Boolean).length, 'paper recall');
+  if (xp) await gainXP(xp, 'paper recall');
 };
 
 function renderLessons(nb, el, arg) {
@@ -1541,7 +1640,7 @@ function cleanLesson(d) { // make sure every multiple-choice check really has it
 // ── after the AI writes something: tidy it, then a second AI pass fixes facts and over-complicated sentences ──
 const SLIDE_RX = /\s*\((?:see\s+)?(?:slides?|p\.|pages?)\s*[\d,\s–-]+\)/gi;
 const OPTION_RX = /\b(?:option|choice)\s+(?:one|two|three|four|[1-4]|[A-D])\b/i;
-const CAUSE_RX = /\b(ECG|EKG|electrocardiogram|P[- ]wave|QRS(?: complex)?|T[- ]wave)\b([^.]{0,60}?)\b(trigger|cause|control|drive|initiate|produce|start)(s|ed|ing)?\b/gi;
+const CAUSE_RX = /\b(ECG|EKG|electrocardiogram|P[- ]wave|QRS(?: complex)?|T[- ]wave)\b((?:(?!\b(?:which|that|and|but|while|then)\b)[^.,;]){0,25}?)\b(trigger|cause|control|drive|initiate|produce|start)(s|ed|ing)?\b/gi;
 function tidyText(s, bullets = false) {
   let x = String(s || '').replace(SLIDE_RX, '');
   if (bullets && !/\n\s*-\s/.test(x) && /[.:!?]\s+-\s+\S/.test(x)) x = x.replace(/\s+-\s+(?=[A-Z*(])/g, '\n- '); // bullets that came out on one line
@@ -1586,9 +1685,9 @@ async function factCheck(nb, obj) {
   catch { return 0; }
 }
 
-async function buildLesson(nb, i, { force = false } = {}) {
+async function buildLesson(nb, i, { force = false, keep = null } = {}) {
   const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
-  (UI.lessonBusy ||= {})[key] = true;
+  if (UI.lessonBusy?.[key]) return; (UI.lessonBusy ||= {})[key] = true;
   const prev = lessonOf(nb, i);
   let data = null;
   if (await aiReady()) {
@@ -1611,7 +1710,7 @@ async function buildLesson(nb, i, { force = false } = {}) {
     }
   }
   if (!data) data = localLesson(nb, c);
-  if (data.fallback && prev?.data && !prev.data.fallback && force) data = prev.data; // a failed rewrite keeps the good one
+  const good = keep || prev?.data; if (data.fallback && good && !good.fallback) data = good; // a failed rewrite keeps the good lesson
   nb.lessons[i] = { v: LESSON_V, title: c.title, data, pos: force ? 0 : prev?.pos || 0, checks: force ? {} : prev?.checks || {}, help: force ? {} : prev?.help || {}, done: !force && !!prev?.done };
   delete UI.lessonBusy[key];
   await save(nb);
@@ -1619,22 +1718,25 @@ async function buildLesson(nb, i, { force = false } = {}) {
 ACT['lesson-rewrite'] = async () => {
   const nb = curNb(); const i = +route().arg;
   if (!S.status.claude) { toast('Writing lessons needs the AI tutor. See Settings.', 'err'); return openSettings(); }
-  delete nb.lessons[i].data; render();
-  await buildLesson(nb, i, { force: true });
-  if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i);
+  const p = buildLesson(nb, i, { force: true, keep: nb.lessons[i]?.data }); render(); // marks itself busy before the redraw
+  await p;
+  if (onLesson(nb, i)) lessonShow(nb, i);
 };
 
 function renderLesson(nb, el, i) {
   const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`; let L = lessonOf(nb, i);
   // an older, wordier lesson nobody has started yet gets rewritten in the newer, shorter style
-  if (L?.data && !L.data.fallback && (L.v || 1) < LESSON_V && !L.done && !(L.pos > 0) && !Object.keys(L.checks || {}).length && S.status.claude) { delete L.data; L = null; }
+  if (L?.data && !L.data.fallback && (L.v || 1) < LESSON_V && !L.done && !(L.pos > 0) && !Object.keys(L.checks || {}).length && S.status.claude && !UI.lessonBusy?.[key]) {
+    buildLesson(nb, i, { keep: L.data }).then(() => { if (onLesson(nb, i)) lessonShow(nb, i); });
+  }
+  if (UI.lessonBusy?.[key]) L = null; // show the "writing…" card while a build runs
   if (!L?.data) {
     el.innerHTML = `<div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a><span class="small muted">Section ${i + 1} of ${nb.digest.cards.length}</span></div>
       <div class="card building lesson-card"><div style="font-size:2.6rem">${esc(c.emoji)}</div><h2 style="margin:6px 0">${esc(c.title)}</h2>
       <div class="spinner lg" style="margin:14px auto"></div>
       <p class="muted lesson-phase" style="margin:0">Writing a beginner-friendly lesson for this section…</p>
       <p class="small muted">Usually 15–40 seconds (it’s written, then fact-checked). It’s saved, so next time it opens instantly.</p></div>`;
-    if (!UI.lessonBusy?.[key]) buildLesson(nb, i).then(() => { if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i); });
+    if (!UI.lessonBusy?.[key]) buildLesson(nb, i).then(() => { if (onLesson(nb, i)) lessonShow(nb, i); });
     return;
   }
   const d = L.data; const st = lessonStages(d); L.pos = Math.min(L.pos || 0, st.length - 1);
@@ -1648,7 +1750,146 @@ function renderLesson(nb, el, i) {
     <div class="lesson-nav">${L.pos > 0 && s.k !== 'done' ? '<button class="btn ghost" data-act="lesson-back">‹ Back</button>' : '<span></span>'}${lessonNextBtn(nb, i, L, s)}</div>
   </div>`;
   UI.lessonDir = '';
+  if ((s.k === 'intro' || s.k === 'step') && !picsFor(L) && S.status.claude) lessonPics(nb, i);
 }
+// ── Pictures for lesson steps ──
+// One AI call per section looks at the lecture's slides and picks the slide that best SHOWS each step (with a
+// "look at this" pointer). Steps with no good slide get a labeled diagram or photo from an image library
+// (Google Images when the site has it, otherwise Wikimedia Commons), which the student can swap or hide.
+const stepSig = (L) => (L?.data?.steps || []).map((x) => x.title).join('|');
+const picsFor = (L) => (L?.pics && L.pics.sig === stepSig(L) ? L.pics : null);
+const WEB_IMG = /^https:\/\/[^\s"'<>\\]+$/;
+async function lessonPicCandidates(nb, i, max = 14) {
+  await loadVisuals(nb);
+  const c = nb.digest.cards[i]; const near = new Set(refNums(c.source_ref).flatMap((n) => [n - 1, n, n + 1]));
+  const picked = new Set((c.image_refs || []).map((r) => `${r.sid}:${r.idx}`));
+  const all = [];
+  for (const src of nb.sources) {
+    const v = VIS.get(src.id); if (!v) continue;
+    v.items.forEach((it, idx) => {
+      const n = v.numbering === 'file' ? it.file : it.slide;
+      all.push({ sid: src.id, idx, it, n, name: src.name, kind: src.kind, pri: picked.has(`${src.id}:${idx}`) ? 0 : near.has(n) ? 1 : 2 });
+    });
+  }
+  const first = all.filter((x) => x.pri < 2).sort((a, b) => a.pri - b.pri).slice(0, Math.min(10, max));
+  const rest = all.filter((x) => x.pri === 2); const room = max - first.length;
+  const fill = rest.length > room ? Array.from({ length: room }, (_, k) => rest[Math.floor((k * rest.length) / room)]) : rest;
+  return [...first, ...fill];
+}
+async function stepWebPics(q) {
+  q = String(q || '').replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80); if (!q) return [];
+  if (S.status?.googleImages) {
+    try { const g = await googleImages(q); const ok = g.filter((x) => WEB_IMG.test(x.url || '') || WEB_IMG.test(x.thumb || '')).slice(0, 6); if (ok.length) return ok.map((x) => ({ url: x.url, thumb: x.thumb, page: x.page, by: x.by, name: x.name, from: 'web' })); } catch { /* fall back to Wikimedia */ }
+  }
+  const p = new URLSearchParams({ action: 'query', format: 'json', origin: '*', generator: 'search', gsrnamespace: '6', gsrlimit: '12', gsrsearch: q,
+    prop: 'imageinfo', iiprop: 'url|size|mime|extmetadata', iiurlwidth: '900', iiextmetadatafilter: 'LicenseShortName|Artist' });
+  const r = await fetch('https://commons.wikimedia.org/w/api.php?' + p); if (!r.ok) return [];
+  const d = await r.json();
+  return Object.values(d.query?.pages || {}).sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((pg) => {
+    const ii = pg.imageinfo?.[0];
+    if (!ii || !/^image\/(jpeg|png|gif|webp|svg\+xml)$/.test(ii.mime || '') || Math.max(ii.width, ii.height) < 300) return null;
+    const url = String(ii.thumburl || ii.url || '').split('?')[0]; if (!okPhoto(url)) return null;
+    const md = ii.extmetadata || {};
+    return { url, thumb: url, page: String(ii.descriptionurl || ''), by: htmlText(md.Artist?.value).slice(0, 60) || 'Unknown', license: htmlText(md.LicenseShortName?.value) || '',
+      name: String(pg.title || '').replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').trim().slice(0, 60), from: 'Wikimedia Commons' };
+  }).filter(Boolean).slice(0, 6);
+}
+// specific words first, then broader ones, then the section itself
+async function findStepPics(o, x, section) {
+  const tries = [o.q, o.q2 && `${o.q2} diagram`, o.q2, o.q && o.q.split(' ').slice(0, 2).join(' ') + ' diagram', `${section} diagram`]
+    .filter(Boolean).filter((q, k, all) => all.indexOf(q) === k);
+  const out = [];
+  for (const q of tries) { for (const r of await stepWebPics(q)) if (!out.some((o) => o.url === r.url)) out.push(r); if (out.length >= 8) break; }
+  return out.slice(0, 10);
+}
+async function lessonPics(nb, i) {
+  const key = `${nb.id}:${i}`; if ((UI.lessonPicsBusy ||= {})[key]) return;
+  const L = lessonOf(nb, i); if (!L?.data?.steps?.length) return;
+  UI.lessonPicsBusy[key] = true;
+  const sig = stepSig(L); const out = {};
+  try {
+    const cands = await lessonPicCandidates(nb, i); const images = []; const map = [];
+    for (const x of cands) { try { images.push({ n: images.length + 1, label: `${x.kind === 'pdf' ? 'Page' : 'Slide'} ${x.n} of ${x.name}`, data: await shrinkDataUrl(x.it.src, 640, 0.7) }); map.push(x); } catch { /* skip */ } }
+    const steps = L.data.steps.map((x) => ({ title: x.title, text: [x.plain, String(x.explain || '').replace(/[*_#>`]/g, '')].filter(Boolean).join(' ').slice(0, 500) }));
+    const r = await ai('lesson_pics', { title: nb.digest.cards[i].title, steps, images });
+    const used = {};
+    for (const row of r.steps || []) {
+      const j = Math.round(+row.step) - 1; if (!(j >= 0 && j < steps.length) || out[j]) continue;
+      const k = Math.round(+row.image) - 1; const m = map[k];
+      if (m && (used[k] || 0) < 2) { used[k] = (used[k] || 0) + 1; out[j] = { slide: { sid: m.sid, idx: m.idx }, look: String(row.look || '').slice(0, 160), q: String(row.search || '').slice(0, 80), q2: String(row.search_broad || '').slice(0, 60) }; }
+      else out[j] = { look: String(row.look || '').slice(0, 160), q: String(row.search || '').slice(0, 80), q2: String(row.search_broad || '').slice(0, 60) };
+    }
+    // steps without a slide: a real diagram or photo from an image library
+    await Promise.all(steps.map(async (x, j) => {
+      const o = (out[j] ||= { look: '', q: '' }); if (o.slide) return;
+      try { const alts = await findStepPics(o, x, nb.digest.cards[i].title); if (alts.length) { o.alts = alts; o.at = 0; } } catch { /* no picture */ }
+    }));
+    // keep only library pictures whose names say they fit the step (an off-topic picture is worse than none)
+    const vet = steps.map((x, j) => ({ step: j + 1, title: x.title, look: out[j]?.look, options: (out[j]?.alts || []).map((w) => w.name) })).filter((v) => v.options.length);
+    if (vet.length) {
+      try {
+        const r = await ai('pic_vet', { title: nb.digest.cards[i].title, steps: vet });
+        const pick = {}; for (const row of r.steps || []) pick[Math.round(+row.step) - 1] = Math.round(+row.pick);
+        for (const v of vet) {
+          const o = out[v.step - 1]; const k = pick[v.step - 1];
+          if (k >= 1 && k <= o.alts.length) { o.alts.unshift(...o.alts.splice(k - 1, 1)); o.at = 0; } else { o.extra = o.alts; delete o.alts; } // none fit: offer them only on request
+        }
+      } catch { /* couldn't check: show the first result */ }
+    }
+  } catch (e) { console.warn('lesson pictures', e); delete UI.lessonPicsBusy[key]; return; } // try again next time the lesson opens
+  delete UI.lessonPicsBusy[key];
+  const L2 = lessonOf(nb, i); if (!L2 || stepSig(L2) !== sig) return; // the lesson was rewritten meanwhile
+  L2.pics = { sig, steps: out }; await save(nb);
+  if (onLesson(nb, i) && lessonStages(L2.data)[L2.pos]?.k === 'step') { const slot = $('#stepPic'); if (slot) slot.outerHTML = stepPicHTML(nb, i, L2, lessonStages(L2.data)[L2.pos].j); }
+}
+function stepPicHTML(nb, i, L, j) {
+  const P = picsFor(L); const o = P?.steps?.[j];
+  if (!P) return UI.lessonPicsBusy?.[`${nb.id}:${i}`] ? '<div class="step-pic loading" id="stepPic"><span class="spinner"></span> Finding a picture for this step…</div>' : '<div id="stepPic" hidden></div>';
+  const look = o?.look ? `<figcaption>👀 ${esc(o.look)}</figcaption>` : '';
+  if (o?.hidden) return `<div class="step-pic-off" id="stepPic"><button class="btn sm ghost" data-act="step-pic-show" data-j="${j}">🖼️ Show the picture</button></div>`;
+  if (o?.slide) {
+    const sh = refShots(nb, [o.slide])[0];
+    if (sh) { (UI.shots ||= {})[`lstep${i}_${j}`] = [sh];
+      return `<figure class="step-pic" id="stepPic"><button class="step-pic-img" data-act="zoom-shot" data-key="lstep${i}_${j}" data-k="0" aria-label="Enlarge"><img src="${sh.src}" alt="${esc(sh.kind === 'pdf' ? 'Page' : 'Slide')} ${sh.n}"></button>
+        ${look}<div class="step-pic-src"><span>From your ${sh.kind === 'pdf' ? 'page' : 'slide'} ${sh.n}</span><button class="linklike" data-act="step-pic-hide" data-j="${j}">Hide</button></div></figure>`; }
+  }
+  const w = o?.alts?.[o.at || 0];
+  if (w) {
+    const src = WEB_IMG.test(w.url || '') ? w.url : w.thumb; const fb = WEB_IMG.test(w.thumb || '') ? w.thumb : '';
+    return `<figure class="step-pic" id="stepPic"><button class="step-pic-img" data-act="zoom-web" data-j="${j}" aria-label="Enlarge"><img src="${esc(src)}" data-fb="${esc(fb)}" alt="${esc(w.name || 'Picture')}" referrerpolicy="no-referrer" loading="lazy"></button>
+      ${look}<div class="step-pic-src"><span>🌐 Not from your slides · ${w.page && WEB_IMG.test(w.page) ? `<a href="${esc(w.page)}" target="_blank" rel="noopener noreferrer">${esc(w.from)}${w.by ? `, ${esc(w.by)}` : ''}</a>` : esc(w.from)}${w.license ? ` (${esc(w.license)})` : ''}</span>
+      <span class="row" style="gap:10px">${o.alts.length > 1 ? `<button class="linklike" data-act="step-pic-next" data-j="${j}">↻ Another (${(o.at || 0) + 1}/${o.alts.length})</button>` : ''}<button class="linklike" data-act="step-pic-hide" data-j="${j}">Hide</button></span></div></figure>`;
+  }
+  if (UI.stepPicFind === `${nb.id}:${i}:${j}`) return '<div class="step-pic loading" id="stepPic"><span class="spinner"></span> Searching for a picture…</div>';
+  return `<div class="step-pic-off" id="stepPic"><button class="btn sm ghost" data-act="step-pic-find" data-j="${j}">🖼️ Find a picture of this</button></div>`;
+}
+function stepPicCtx(el) { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const P = picsFor(L); const j = +el.dataset.j; return { nb, i, L, j, o: P ? (P.steps[j] ||= { look: '', q: '' }) : null }; }
+const redrawStepPic = (nb, i, L, j) => { const slot = $('#stepPic'); if (slot) slot.outerHTML = stepPicHTML(nb, i, L, j); };
+ACT['step-pic-hide'] = async (el) => { const { nb, i, L, j, o } = stepPicCtx(el); if (!o) return; o.hidden = true; await save(nb); redrawStepPic(nb, i, L, j); };
+ACT['step-pic-show'] = async (el) => { const { nb, i, L, j, o } = stepPicCtx(el); if (!o) return; o.hidden = false; await save(nb); redrawStepPic(nb, i, L, j); };
+ACT['step-pic-next'] = async (el) => { const { nb, i, L, j, o } = stepPicCtx(el); if (!o?.alts?.length) return; o.at = ((o.at || 0) + 1) % o.alts.length; await save(nb); redrawStepPic(nb, i, L, j); };
+ACT['step-pic-find'] = async (el) => {
+  const { nb, i, L, j, o } = stepPicCtx(el); if (!o) return; const x = L.data.steps[j];
+  UI.stepPicFind = `${nb.id}:${i}:${j}`; redrawStepPic(nb, i, L, j);
+  let alts = o.extra || []; delete o.extra;
+  if (!alts.length) try { alts = await findStepPics(o, x, nb.digest.cards[i].title); } catch { /* none */ }
+  UI.stepPicFind = null;
+  if (alts.length) { o.alts = alts; o.at = 0; o.hidden = false; await save(nb); } else toast('Couldn’t find a good picture for this step.');
+  if (onLesson(nb, i)) redrawStepPic(nb, i, L, j);
+};
+ACT['zoom-web'] = (el) => {
+  const { o } = stepPicCtx(el); const w = o?.alts?.[o.at || 0]; if (!w) return;
+  const src = WEB_IMG.test(w.url || '') ? w.url : w.thumb;
+  modal(`<div class="row between" style="margin-bottom:8px"><b>${esc(w.name || 'Picture')}</b><span class="small muted">🌐 ${esc(w.from)}</span></div>
+    <img src="${esc(src)}" alt="" referrerpolicy="no-referrer">
+    ${o.look ? `<p class="small" style="margin:10px 0 0">👀 ${esc(o.look)}</p>` : ''}
+    <div class="row" style="justify-content:space-between;margin-top:10px">${w.page && WEB_IMG.test(w.page) ? `<a class="small" href="${esc(w.page)}" target="_blank" rel="noopener noreferrer">Source${w.by ? `: ${esc(w.by)}` : ''}${w.license ? ` (${esc(w.license)})` : ''}</a>` : '<span></span>'}<button class="btn" data-act="close-modal">Close</button></div>`);
+};
+// a web picture that won't load falls back to its thumbnail, then hides itself
+document.addEventListener('error', (e) => {
+  const img = e.target; if (!(img instanceof HTMLImageElement) || !img.closest?.('.step-pic')) return;
+  if (img.dataset.fb && img.src !== img.dataset.fb) { img.src = img.dataset.fb; img.dataset.fb = ''; } else img.closest('.step-pic').hidden = true;
+}, true);
 const checkFinal = (r) => !!r?.verdict && (r.verdict === 'correct' || !!r.revealed || (r.tries || 1) >= 2);
 function lessonNextBtn(nb, i, L, s) {
   const ch = s.k === 'check' ? L.data.steps[s.j].check : null;
@@ -1682,6 +1923,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
     return `<div class="lesson-kicker">Step ${s.j + 1} of ${steps}</div><h2>${esc(x.title)}</h2>
       ${x.plain ? `<div class="lesson-plain"><span>🗣️ In plain words</span>${esc(x.plain)}</div>` : ''}
       <div class="lesson-text">${md(x.explain)}</div>
+      ${stepPicHTML(nb, i, L, s.j)}
       ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
       <div class="paper-task"><span class="paper-ico">✍️</span><div>${esc(paperPrompt(x, s.j))}</div></div>
       ${x.terms?.length ? `<dl class="lesson-terms">${x.terms.map((t) => `<div><dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd></div>`).join('')}</dl>` : ''}
@@ -1822,7 +2064,8 @@ async function buildTest(nb, i) {
         seen: seenQuestions(nb, i).slice(-40).map((x) => x.q.slice(0, 160)),
         concepts: nb.digest.concepts.map((x) => ({ id: x.id, name: x.name })),
         earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 3).map((x) => ({ title: x.title, points: x.points })) });
-      const used = [...(L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer })), ...seenQuestions(nb, i)];
+      const ownChecks = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer }));
+      const used = [...seenQuestions(nb, i).slice(-(40 - ownChecks.length)), ...ownChecks]; // keep this section's own checks in every comparison
       // only this section and earlier ones: drop questions about concepts that are first taught in a later section
       const known = new Set(nb.digest.cards.slice(0, i + 1).flatMap((x) => x.concept_ids || []));
       const allIds = new Set(nb.digest.concepts.map((x) => x.id));
@@ -1833,7 +2076,7 @@ async function buildTest(nb, i) {
       // same meaning in different words (vs. what was already asked, and inside this test): ask the AI
       let aiRepeat = new Set();
       try {
-        const d = await ai('dedupe', { asked: used.slice(-40).map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) });
+        const d = await ai('dedupe', { asked: used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) });
         aiRepeat = new Set((d.repeats || []).map((n) => n - 1));
       } catch { /* word-overlap check below still runs */ }
       const picked = [];
@@ -1845,11 +2088,12 @@ async function buildTest(nb, i) {
       }
       // second, independent repeat check on the final picks (the AI judge isn't perfectly consistent, so two passes catch more)
       try {
-        const d2 = await ai('dedupe', { asked: used.slice(-40).map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: mcq.map((q) => `${q.question} (answer: ${q.answer})`) });
+        const d2 = await ai('dedupe', { asked: used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: mcq.map((q) => `${q.question} (answer: ${q.answer})`) });
         const drop = new Set((d2.repeats || []).map((n) => n - 1));
         if (drop.size) {
+          const dropped = new Set(mcq.filter((_, n) => drop.has(n)));
           mcq = mcq.filter((_, n) => !drop.has(n));
-          all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n) || mcq.includes(q)) return; if (!mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); });
+          all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n) || dropped.has(q) || mcq.includes(q)) return; if (!mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); });
         }
       } catch { /* keep the first pass */ }
       mcq.sort((x, y) => (x.review ? 1 : 0) - (y.review ? 1 : 0)); // review questions last
@@ -1857,7 +2101,7 @@ async function buildTest(nb, i) {
       if (mcq.length < 3 || !frs.length) throw new Error('The test came back incomplete. Try again.');
       t = tidyDeep({ mcq, paragraphs: frs });
       CAUSE_RX.lastIndex = 0;
-      if (CAUSE_RX.test(textOf(t)) || OPTION_RX.test(textOf(t))) { await factCheck(nb, t); fixCauseClaims(t); t.mcq = t.mcq.map(shuffleOpts).filter(Boolean); }
+      if (CAUSE_RX.test(textOf(t)) || OPTION_RX.test(textOf(t))) { const before = JSON.parse(JSON.stringify(t)); await factCheck(nb, t); fixCauseClaims(t); t.mcq = t.mcq.map(shuffleOpts).filter(Boolean); if (t.mcq.length < 3) { t = before; fixCauseClaims(t); } }
       CAUSE_RX.lastIndex = 0;
     } catch (e) { if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the section test with AI (${e.message}). Using a shorter one.`, 'err'); }
   }
@@ -1873,13 +2117,13 @@ function testScore(L) {
     para: frs.length && graded.length === frs.length ? Math.round(graded.reduce((a, b) => a + b, 0) / graded.length) : null };
 }
 function frHTML(nb, i, T, p) {
-  const key = `${nb.id}:${i}:${p}`; const P = testFRs(T)[p]; const A = testFRAnswers(T)[p]; const R = A?.result; const grading = UI.paraGrading === key;
+  const key = `${nb.id}:${i}:${p}`; const P = testFRs(T)[p]; const A = testFRAnswers(T)[p]; const R = A?.result; const grading = !!UI.paraGrading?.[key];
   const body = R ? `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(A.text)}</div></div>
       <div class="verdict ${R.verdict}"><div class="row between"><h3>${{ correct: '✓ Strong answer', partial: '◐ Good start', incorrect: '✗ Needs more' }[R.verdict] || 'Graded'}</h3><b>${Math.round(R.score)}%</b></div>
         <div class="meter" style="margin:6px 0 8px"><i style="width:${Math.round(R.score)}%"></i></div>
         ${R.feedback ? `<div>${esc(R.feedback)}</div>` : ''}
-        ${R.covered?.length ? `<div class="small" style="margin-top:8px"><b>You covered:</b><ul class="list-good">${R.covered.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-        ${R.missing?.length ? `<div class="small"><b>Add next time:</b><ul>${R.missing.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${R.covered?.length ? `<div class="small fb-good" style="margin-top:8px"><b>✓ You covered</b><ul class="list-good">${R.covered.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${R.missing?.length ? `<div class="small fb-gap"><b>Work on next</b><ul class="list-gap">${R.missing.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
         ${R.misconceptions?.length ? `<div class="small"><b>Watch out:</b><ul>${R.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
         ${P.model ? `<details class="small" style="margin-top:6px"><summary>See a model answer</summary><p style="margin:6px 0 0">${esc(P.model)}</p></details>` : ''}</div>`
     : `<textarea data-fr="${p}" rows="6" placeholder="Write 4–6 sentences…" ${grading ? 'disabled' : ''}>${esc(UI.paraDraft?.[key] || '')}</textarea>
@@ -1890,7 +2134,7 @@ function frHTML(nb, i, T, p) {
 function testStageHTML(nb, i, L) {
   const key = `${nb.id}:${i}`; const T = L.test;
   if (!T) {
-    if (!UI.testBusy?.[key]) buildTest(nb, i).then(() => { if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i); });
+    if (!UI.testBusy?.[key]) buildTest(nb, i).then(() => { if (onLesson(nb, i)) lessonShow(nb, i); });
     return `<div class="lesson-kicker">Section test</div><h2>Writing your test…</h2><div class="spinner lg" style="margin:10px auto"></div>
       <p class="muted" style="text-align:center;margin:0">${TEST_MCQ} multiple-choice questions and ${TEST_FR} free-response questions, all different. Usually 20–40 seconds.</p>`;
   }
@@ -1935,8 +2179,8 @@ ACT['test-para'] = async (el) => {
   const p = +el.dataset.p; const P = testFRs(T)[p]; const fa = testFRAnswers(T); if (!P || fa[p]?.result) return;
   const key = `${nb.id}:${i}:${p}`; const text = (document.querySelector(`[data-fr="${p}"]`)?.value || '').trim();
   if (wordCount(text) < 8) { toast('Write a few sentences first (at least 8 words).'); document.querySelector(`[data-fr="${p}"]`)?.focus(); return; }
-  (UI.paraDraft ||= {})[key] = text; UI.paraGrading = key;
-  const keep = () => { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); };
+  if (UI.paraGrading?.[key]) return; (UI.paraDraft ||= {})[key] = text; (UI.paraGrading ||= {})[key] = true;
+  const keep = () => lessonShow(nb, i);
   keep();
   let r = null;
   if (S.status.claude) { try { r = await ai('paragraph', { prompt: P.prompt, key_points: P.key_points, model: P.model, response: text }); } catch (e) { aiError(e); } }
@@ -1946,10 +2190,10 @@ ACT['test-para'] = async (el) => {
     r = { score, verdict: score >= 80 ? 'correct' : score >= 40 ? 'partial' : 'incorrect', covered: hits, missing: (P.key_points || []).filter((x) => !hits.includes(x)), misconceptions: [], feedback: 'Checked by matching key points (the AI grader wasn’t available).' };
   }
   r.score = Math.max(0, Math.min(100, r.score));
-  fa[p] = { text, result: r }; UI.paraGrading = null; delete UI.paraDraft[key];
+  fa[p] = { text, result: r }; delete UI.paraGrading[key]; delete UI.paraDraft[key];
   (nb.digest.cards[i].concept_ids || []).forEach((cid) => record(nb, cid, r.score / 100));
   await save(nb);
-  if (route().tab === 'lessons' && +route().arg === i) keep();
+  if (onLesson(nb, i)) keep();
   const xp = Math.round(r.score / 10); if (xp) gainXP(xp, 'free response');
 };
 
@@ -1960,18 +2204,18 @@ function teachBackHTML(nb, i, L) {
     const r = T.result;
     return `<div class="lesson-box teach-box"><b>🗣️ Teach it back · ${Math.round(r.score)}%</b>
       <div class="small muted">You wrote: “${esc(T.text)}”</div>
-      ${r.nailed?.length ? `<div class="small"><b>Nailed:</b> ${r.nailed.map(esc).join(' · ')}</div>` : ''}
-      ${r.gaps?.length ? `<div class="small"><b>Add next time:</b> ${r.gaps.map(esc).join(' · ')}</div>` : ''}
-      ${r.misconceptions?.length ? `<div class="small"><b>Careful:</b> ${r.misconceptions.map(esc).join(' · ')}</div>` : ''}
+      ${r.nailed?.length ? `<div class="small fb-good"><b>✓ Nailed</b><ul class="list-good">${r.nailed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+      ${r.gaps?.length ? `<div class="small fb-gap"><b>Work on next</b><ul class="list-gap">${r.gaps.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+      ${r.misconceptions?.length ? `<div class="small fb-bad"><b>Careful</b><ul class="list-bad">${r.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
       ${r.better_analogy ? `<div class="small">🔗 ${esc(r.better_analogy)}</div>` : ''}
       <div class="row"><button class="btn sm ghost" data-act="lesson-teach-again">Try explaining again</button></div></div>`;
   }
   return `<div class="lesson-box teach-box"><b>🗣️ Last step: teach it back</b>
     <div class="small">Explain <b>${esc(c.title)}</b> to a 12-year-old in about 3 sentences, without looking. Explaining it is one of the best ways to make it stick.</div>
-    <textarea id="teachBackIn" rows="4" placeholder="So basically…" ${busy ? 'disabled' : ''}>${esc(UI.teachBackDraft || '')}</textarea>
+    <textarea id="teachBackIn" rows="4" placeholder="So basically…" ${busy ? 'disabled' : ''}>${esc(UI.teachBackFor === `${nb.id}:${i}` ? UI.teachBackDraft || '' : '')}</textarea>
     <div class="row"><button class="btn primary sm" data-act="lesson-teach" ${busy ? 'disabled' : ''}>${busy ? '<span class="spinner"></span> Reading…' : 'Check my explanation'}</button><span class="small muted">Up to +30 XP</span></div></div>`;
 }
-document.addEventListener('input', (e) => { if (e.target.id === 'teachBackIn') UI.teachBackDraft = e.target.value; });
+document.addEventListener('input', (e) => { if (e.target.id === 'teachBackIn') { UI.teachBackDraft = e.target.value; UI.teachBackFor = `${route().id}:${route().arg}`; } });
 ACT['lesson-teach'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const c = nb.digest.cards[i];
   const text = ($('#teachBackIn')?.value || '').trim();
@@ -1987,7 +2231,7 @@ ACT['lesson-teach'] = async () => {
     if (gain) await gainXP(gain, 'teach-back');
   } catch (e) { aiError(e); }
   UI.teachBackBusy = null;
-  if (route().tab === 'lessons' && +route().arg === i) { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); }
+  if (onLesson(nb, i)) { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); }
 };
 ACT['lesson-teach-again'] = async () => { const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); UI.teachBackDraft = ''; delete L.teach; await save(nb); const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); };
 
@@ -1997,13 +2241,14 @@ ACT['lesson-teach-again'] = async () => { const nb = curNb(); const i = +route()
 function deepOf(nb, i) { const D = (nb.deep || {})[i]; const c = nb.digest?.cards[i]; return D && c && D.title === c.title ? D : null; }
 const BEYOND = '<span class="tag beyond" title="Not in your uploaded material: general A&P knowledge. Check it against your professor’s slides.">🌐 Beyond your notes</span>';
 async function buildDeep(nb, i) {
-  const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`; (UI.deepBusy ||= {})[key] = true;
+  const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`; if (UI.deepBusy?.[key]) return; (UI.deepBusy ||= {})[key] = true; delete UI.deepErr?.[key];
   const prev = deepOf(nb, i) || (UI.deepPrev?.title === c.title ? UI.deepPrev : null); UI.deepPrev = null;
   try {
     if (!(await aiReady())) { const e = new Error('Going deeper needs the AI tutor. See Settings.'); e.code = 'no_key'; throw e; }
     await loadVisuals(nb);
-    const shots = cardShots(nb, c, 3); const images = [];
-    for (const [k, sh] of shots.entries()) { try { images.push({ n: k + 1, label: `${sh.kind === 'pdf' ? 'Page' : 'Slide'} ${sh.n}`, data: await shrinkDataUrl(sh.src, 900, 0.75) }); } catch { /* skip */ } }
+    const allShots = cardShots(nb, c, 3); const images = []; const picMap = [];
+    for (const sh of allShots) { try { const data = await shrinkDataUrl(sh.src, 900, 0.75); images.push({ n: images.length + 1, label: `${sh.kind === 'pdf' ? 'Page' : 'Slide'} ${sh.n}`, data }); picMap.push(allShots.indexOf(sh)); } catch { /* skip */ } }
+    const shots = picMap.map((k) => allShots[k]);
     const L = lessonOf(nb, i);
     const asked = [...(L?.data?.steps || []).map((s) => s.check?.question).filter(Boolean), ...(L?.test?.mcq || []).map((q) => q.question),
       ...(prev?.asked || []), ...(prev?.data?.questions || []).map((q) => q.question)].slice(-40);
@@ -2017,24 +2262,30 @@ async function buildDeep(nb, i) {
       if (q.type !== 'mcq') return { ...q, options: [] };
       const s = shuffleOpts(q); return s ? { ...s, type: 'mcq', beyond: !!q.beyond } : { ...q, type: 'short', options: [] };
     });
-    r.pictures = (r.pictures || []).filter((p) => p.image >= 1 && p.image <= shots.length && (p.walkthrough || []).length);
+    r.pictures = (r.pictures || []).filter((p) => p.image >= 1 && p.image <= shots.length && (p.walkthrough || []).length).map((p) => ({ ...p, image: picMap[p.image - 1] + 1 }));
     if (!(r.layers || []).length) throw new Error('The deep dive came back empty. Try again.');
     nb.deep ||= {};
     nb.deep[i] = { title: c.title, data: r, at: Date.now(), answers: {}, count: (prev?.count || 0) + 1, asked, toRecall: false };
     await save(nb);
-  } catch (e) { aiError(e); }
+  } catch (e) { (UI.deepErr ||= {})[key] = e.message || 'Something went wrong'; if (e.code === 'no_key') aiError(e); }
   delete UI.deepBusy[key];
 }
 function renderDeep(nb, el, arg) {
   const i = +arg; const c = nb.digest?.cards[i];
   if (!c) return go(`#/nb/${nb.id}/lessons`);
-  const D = deepOf(nb, i); const key = `${nb.id}:${i}`;
+  let D = deepOf(nb, i); const key = `${nb.id}:${i}`;
+  if (UI.deepBusy?.[key]) D = null; // a new deep dive is being written
   const top = `<div class="lesson-top"><a href="#/nb/${nb.id}/lessons" class="small">← All sections</a><a href="#/nb/${nb.id}/lessons/${i}" class="small">Back to the lesson</a></div>`;
   if (!D) {
     el.innerHTML = `<div class="lesson-wrap">${top}<div class="card building lesson-card"><div style="font-size:2.4rem">🔎</div><h2 style="margin:6px 0">Going deeper: ${esc(c.title)}</h2>
       <div class="spinner lg" style="margin:14px auto"></div><p class="muted" style="margin:0">Working out the mechanism, walking through the slide pictures, and writing harder questions…</p>
       <p class="small muted">Usually 20–45 seconds. It’s saved for next time.</p></div></div>`;
-    if (!UI.deepBusy?.[key]) buildDeep(nb, i).then(() => { if (route().tab === 'deep' && +route().arg === i) render(); });
+    if (UI.deepErr?.[key] && !UI.deepBusy?.[key]) {
+      el.innerHTML = `<div class="lesson-wrap">${top}<div class="card lesson-card"><div style="font-size:2rem">⚠️</div><h2 style="margin:4px 0">Couldn’t go deeper right now</h2>
+        <p class="muted" style="margin:0">${esc(UI.deepErr[key])}</p><div class="row"><button class="btn primary" data-act="deep-retry" data-i="${i}">Try again</button><a class="btn" href="#/nb/${nb.id}/lessons/${i}">Back to the lesson</a></div></div></div>`;
+      return;
+    }
+    if (!UI.deepBusy?.[key]) buildDeep(nb, i).then(() => { if (onDeep(nb, i)) render(); });
     return;
   }
   const d = D.data; UI.shots = UI.shots || {};
@@ -2089,7 +2340,7 @@ function deepQHTML(nb, i, D, q, k) {
   } else if (a) {
     body = `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(a.text)}</div></div>`;
   } else {
-    body = `<textarea data-dq="${k}" rows="3" placeholder="Explain the cause → effect chain…" ${grading ? 'disabled' : ''}>${esc(UI.deepDraft?.[`${i}:${k}`] || '')}</textarea>
+    body = `<textarea data-dq="${k}" rows="3" placeholder="Explain the cause → effect chain…" ${grading ? 'disabled' : ''}>${esc(UI.deepDraft?.[`${nb.id}:${i}:${k}`] || '')}</textarea>
       <div class="row"><button class="btn primary sm" data-act="deep-short" data-q="${k}" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : 'Check my answer'}</button></div>`;
   }
   const v = a?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
@@ -2106,7 +2357,7 @@ ACT['deep-override'] = async (el) => {
   await save(nb); deepRedraw(nb, i); toast('Counted as correct ✓');
 };
 function deepRedraw(nb, i) { const y = window.scrollY; renderDeep(nb, $('#tab'), i); window.scrollTo(0, y); }
-document.addEventListener('input', (e) => { const k = e.target.dataset?.dq; if (k !== undefined) (UI.deepDraft ||= {})[`${route().arg}:${k}`] = e.target.value; });
+document.addEventListener('input', (e) => { const k = e.target.dataset?.dq; if (k !== undefined) (UI.deepDraft ||= {})[`${route().id}:${route().arg}:${k}`] = e.target.value; });
 ACT['deep-jump'] = (el) => { const t = document.getElementById(el.dataset.to); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + window.scrollY - 130, behavior: 'smooth' }); };
 async function deepAnswered(nb, i, D) {
   const qs = D.data.questions || [];
@@ -2133,37 +2384,41 @@ ACT['deep-mcq'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const D = deepOf(nb, i); const k = +el.dataset.q; if (!D || D.answers[k]) return;
   const q = D.data.questions[k]; const pick = +el.dataset.o; const ok = q.options[pick] === q.answer;
   D.answers[k] = { pick, ok: ok ? 1 : 0, verdict: ok ? 'correct' : 'incorrect', feedback: ok ? '' : `The answer is: ${q.answer}` };
-  record(nb, itemConcept(nb, i, q), ok ? 1 : 0); await save(nb); deepRedraw(nb, i);
+  record(nb, itemConcept(nb, i, q), ok ? 1 : 0); await save(nb); if (onDeep(nb, i)) deepRedraw(nb, i);
   if (ok) gainXP(3, 'deep-dive question');
-  await deepAnswered(nb, i, D); deepRedraw(nb, i);
+  await deepAnswered(nb, i, D); if (onDeep(nb, i)) deepRedraw(nb, i);
 };
 ACT['deep-short'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const D = deepOf(nb, i); const k = +el.dataset.q; if (!D || D.answers[k]) return;
   const q = D.data.questions[k]; const text = (document.querySelector(`[data-dq="${k}"]`)?.value || '').trim();
   if (wordCount(text) < 3) { toast('Write your answer first: a sentence or two.'); return; }
-  UI.deepGrading = `${nb.id}:${i}:${k}`; deepRedraw(nb, i);
+  UI.deepGrading = `${nb.id}:${i}:${k}`; if (onDeep(nb, i)) deepRedraw(nb, i);
   let r = quickGrade(text, q.answer);
   if (!r && S.status.claude) { try { r = await ai('grade', { concept: nb.digest.cards[i].title, question: q.question, answer: q.answer, response: text }); } catch (e) { aiError(e); } }
   if (!r?.verdict) { const cv = coverage(text, q.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare with the answer below.' }; }
   const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
   D.answers[k] = { text, ok, verdict: r.verdict, feedback: r.feedback || '' }; UI.deepGrading = null;
-  record(nb, itemConcept(nb, i, q), ok); await save(nb); deepRedraw(nb, i);
+  record(nb, itemConcept(nb, i, q), ok); await save(nb); if (onDeep(nb, i)) deepRedraw(nb, i);
   if (ok) gainXP(ok >= 1 ? 4 : 2, 'deep-dive question');
-  await deepAnswered(nb, i, D); deepRedraw(nb, i);
+  await deepAnswered(nb, i, D); if (onDeep(nb, i)) deepRedraw(nb, i);
 };
+ACT['deep-retry'] = (el) => { const nb = curNb(); delete UI.deepErr?.[`${nb.id}:${el.dataset.i}`]; render(); };
 ACT['deep-again'] = async (el) => {
   const nb = curNb(); const i = +el.dataset.i; const D = deepOf(nb, i); if (!D) return;
   if (!confirm('Make a new deep dive with fresh angles and new questions? This one will be replaced.')) return;
   D.asked = [...(D.asked || []), ...(D.data.questions || []).map((q) => q.question)].slice(-40);
-  const keep = { title: D.title, count: D.count, asked: D.asked, data: D.data };
-  delete nb.deep[i]; await save(nb);
-  UI.deepPrev = keep; render(); window.scrollTo(0, 0);
+  delete UI.deepErr?.[`${nb.id}:${i}`];
+  const p = buildDeep(nb, i); render(); window.scrollTo(0, 0); // the old deep dive stays saved until the new one succeeds
+  await p; if (UI.deepErr?.[`${nb.id}:${i}`]) { toast(`Couldn’t make a new deep dive (${UI.deepErr[`${nb.id}:${i}`]}). Kept your current one.`, 'err'); delete UI.deepErr[`${nb.id}:${i}`]; }
+  if (onDeep(nb, i)) render();
 };
 
 // Moving between steps re-draws only the lesson and keeps it in view.
-function lessonShow(nb, i) {
+function lessonShow(nb, i, { top: toTop = false } = {}) {
   const el = $('#tab'); if (!el) return;
-  UI.anchorStop?.(); const view = $('#view'); if (view) view.style.minHeight = '';
+  const view = $('#view');
+  if (!toTop && view) return steady(view, () => { renderLesson(nb, el, i); restoreDrafts(); });
+  UI.anchorStop?.(); clearTimeout(UI.holdT); if (view) view.style.minHeight = '';
   renderLesson(nb, el, i);
   const top = $('.lesson-top'); if (top && top.getBoundingClientRect().top < 64) window.scrollTo({ top: Math.max(0, window.scrollY + top.getBoundingClientRect().top - 130), behavior: 'smooth' });
 }
@@ -2174,14 +2429,14 @@ async function lessonMove(delta) {
   UI.lessonDir = delta > 0 ? 'in' : 'back'; UI.lessonAsk = null;
   if (st[L.pos].k === 'done' && (!L.done || L.retaking)) {
     const sc = testScore(L);
-    if (!sc || sc.answered < sc.total || sc.para === null) { L.pos = st.findIndex((x) => x.k === 'test'); toast('Finish the section test to complete this section.'); save(nb); lessonShow(nb, i); return; }
+    if (!sc || sc.answered < sc.total || sc.para === null) { L.pos = st.findIndex((x) => x.k === 'test'); toast('Finish the section test to complete this section.'); save(nb); lessonShow(nb, i, { top: true }); return; }
     const retake = !!L.retaking; L.done = true; L.retaking = false; if (retake) L.retakes = (L.retakes || 0) + 1; nb.progress.learn = true;
-    save(nb); lessonShow(nb, i); confetti(); await gainXP(retake ? 5 : 15, retake ? 'section retaken' : 'section learned');
+    save(nb); lessonShow(nb, i, { top: true }); confetti(); await gainXP(retake ? 5 : 15, retake ? 'section retaken' : 'section learned');
     const added = await lessonToRecall(nb, i, L); await save(nb);
     if (added) setTimeout(() => toast(`🧠 ${added} question${added > 1 ? 's' : ''} added to Recall, so they come back for spaced review`), 1200);
     return;
   }
-  save(nb); lessonShow(nb, i);
+  save(nb); lessonShow(nb, i, { top: true });
 }
 // Spacing: what you missed comes back in Recall tomorrow (today if you were sure but wrong); two test questions you
 // got right come back in 3 days, so the whole section gets re-quizzed later.
@@ -2189,7 +2444,7 @@ async function lessonToRecall(nb, i, L) {
   const day = 86400e3; const items = [];
   (L.data.steps || []).forEach((s, j) => { const ch = s.check; if (!ch?.question) return; const r = L.checks?.[j]; const first = r ? (r.first ?? r.ok) : 0; items.push({ q: ch.question, a: ch.answer, miss: first < 1, sure: r?.conf === 'sure', item: ch }); });
   (L.test?.mcq || []).forEach((q, k) => items.push({ q: q.question, a: q.answer, miss: L.test.answers[k] !== q.answer, test: true, item: q }));
-  const have = new Set(nb.cards.map((c) => norm(c.question))); let keep = 2;
+  const have = new Set(nb.cards.flatMap((c) => [norm(c.question), c.srcQ].filter(Boolean))); let keep = 2;
   const chosen = [];
   for (const it of items) {
     if (have.has(norm(it.q))) continue;
@@ -2209,7 +2464,7 @@ async function lessonToRecall(nb, i, L) {
       else it.q = `${it.q}\n\nChoices: ${it.item.options.join(' · ')}`;
     });
   }
-  for (const it of chosen) nb.cards.push({ id: uid(), question: it.q, answer: it.a, concept_id: itemConcept(nb, i, it.item), kind: 'explain', from: 'lesson', srs: { ...newSrs(), due: it.due }, history: [] });
+  for (const it of chosen) nb.cards.push({ id: uid(), question: it.q, answer: it.a, srcQ: norm(it.item?.question || it.q), concept_id: itemConcept(nb, i, it.item), kind: 'explain', from: 'lesson', srs: { ...newSrs(), due: it.due }, history: [] });
   return chosen.length;
 }
 ACT['lesson-retake'] = async (el) => {
@@ -2221,9 +2476,10 @@ ACT['lesson-retake'] = async (el) => {
   for (const p of testFRs(L.test)) if (p?.prompt) L.pastTests.push({ q: p.prompt, a: '' });
   L.test = null; L.checks = {}; L.pos = 0; L.retaking = true;
   delete UI.cardRecall[`${nb.id}:${i}`]; UI.paperRecall = null;
-  Object.keys(UI.lessonConf || {}).filter((k) => k.startsWith(`${nb.id}:${i}:`)).forEach((k) => delete UI.lessonConf[k]);
+  for (const m of [UI.lessonConf, UI.lessonPick, UI.lessonTyped]) Object.keys(m || {}).filter((k) => k.startsWith(`${nb.id}:${i}:`)).forEach((k) => delete m[k]);
+  if (UI.teachBackDraft) UI.teachBackDraft = '';
   await save(nb);
-  if (route().tab === 'lessons' && route().arg !== '' && +route().arg === i) { UI.lessonDir = 'in'; lessonShow(nb, i); toast('Retake started: same lesson, brand-new test'); }
+  if (route().tab === 'lessons' && route().arg !== '' && +route().arg === i) { UI.lessonDir = 'in'; lessonShow(nb, i, { top: true }); toast('Retake started: same lesson, brand-new test'); }
   else { ACT['lesson-open'](el); setTimeout(() => toast('Retake started: same lesson, brand-new test'), 700); }
 };
 ACT['lesson-next'] = () => lessonMove(1);
@@ -2251,7 +2507,7 @@ ACT['lesson-help'] = async (el) => {
     (L.help[s.j] ||= []).push({ mode, q, guess, a: ans }); await save(nb);
   } catch (e) { aiError(e); }
   UI.lessonHelpBusy = null;
-  if (route().tab === 'lessons' && +route().arg === i) {
+  if (onLesson(nb, i)) {
     lessonShow(nb, i);
     const boxes = document.querySelectorAll('#lessonStage .lesson-box.help'); boxes[boxes.length - 1]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
@@ -2333,7 +2589,7 @@ ACT['lesson-short'] = async () => {
   L.checks[s.j] = { text, ok, verdict: r.verdict, feedback: r.feedback || '', conf, tries: (prev?.tries || 0) + 1, first: prev ? prev.first : ok };
   if (!prev) lessonRecord(nb, i, ch, ok);
   await save(nb);
-  if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i);
+  if (onLesson(nb, i)) lessonShow(nb, i);
   if (ok) gainXP(L.retaking ? 1 : prev ? 2 : ok >= 1 ? 5 : 2, prev ? 'got it on the retry' : 'quick check');
 };
 document.addEventListener('keydown', (e) => {
@@ -2343,6 +2599,7 @@ document.addEventListener('keydown', (e) => {
     if (e.target.id === 'lessonQ') { e.preventDefault(); $('#lessonStage [data-mode="question"]')?.click(); }
     return;
   }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   const opt = { a: 0, b: 1, c: 2, d: 3, 1: 0, 2: 1, 3: 2, 4: 3 }[e.key.toLowerCase()];
   if (opt !== undefined) { const b = document.querySelectorAll('#lessonStage [data-act="lesson-pick"]')[opt]; if (b && !b.disabled) { e.preventDefault(); b.click(); } return; }
@@ -2438,7 +2695,7 @@ ACT['card-draw'] = async (el) => {
 ACT['card-mode'] = (el) => { UI.cardMode = el.dataset.m; render(); };
 ACT['card-reveal'] = async (el) => {
   const nb = curNb(); const i = +el.dataset.i; const c = nb.digest.cards[i];
-  const text = $(`[data-cr="${i}"]`).value;
+  const text = $(`[data-cr="${i}"]`).value; clearDraft($(`[data-cr="${i}"]`));
   let hits = null;
   if (wordCount(text) >= 3 && S.status.claude) {
     el.disabled = true; el.innerHTML = '<span class="spinner"></span> Checking…';
@@ -2448,9 +2705,10 @@ ACT['card-reveal'] = async (el) => {
   if (!hits) hits = c.points.map((p) => coverage(text, p) >= 0.6);
   UI.cardRecall[`${nb.id}:${i}`] = { revealed: true, text, hits };
   const ratio = hits.filter(Boolean).length / c.points.length;
-  c.concept_ids.forEach((cid) => record(nb, cid, ratio));
+  const rk = `${nb.id}:${i}:${dayKey()}`; if (!(UI.recordedRecall ||= new Set()).has(rk)) { UI.recordedRecall.add(rk); (c.concept_ids || []).forEach((cid) => record(nb, cid, ratio)); }
+  const xp = xpGain(nb, `recall:${i}`, 2 + 3 * hits.filter(Boolean).length);
   await save(nb);
-  await gainXP(2 + 3 * hits.filter(Boolean).length, 'card recall');
+  if (xp) await gainXP(xp, 'card recall');
   render();
 };
 ACT['card-retry'] = (el) => { const nb = curNb(); UI.cardRecall[`${nb.id}:${el.dataset.i}`] = { revealed: false, text: '' }; render(); };
@@ -2473,7 +2731,7 @@ function conceptCard(nb, c) {
       <a class="btn sm ghost" href="#/nb/${nb.id}/recall/${c.id}">🧠 Quiz me</a>
     </div></div>`;
 }
-const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(v.svg) : v.src);
+const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(v.svg || '') : /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(String(v.src || '')) ? v.src : '');
 ACT.illustrate = async (el) => {
   const nb = curNb(); const c = nb.digest.concepts.find((x) => x.id === el.dataset.cid); const style = el.dataset.style; const key = `${c.id}:${style}`;
   if (!S.status.claude && !S.status.gemini) { toast('Illustrations need the AI tutor — see Settings', 'err'); return openSettings(); }
@@ -2506,7 +2764,7 @@ async function drawMap(nb) {
   mermaidInit();
   const map = nb.digest.concept_map;
   const blanks = UI.mapMode === 'blanks';
-  const key = nb.id;
+  const key = `${nb.id}:${nb.builtAt || 0}`;
   if (blanks && (!UI.hidden || UI.hidden.key !== key)) {
     const ids = map.nodes.map((n) => n.id).sort(() => Math.random() - 0.5);
     UI.hidden = { key, set: new Set(ids.slice(0, Math.max(3, Math.round(ids.length * 0.4)))), tries: {} };
@@ -2551,7 +2809,7 @@ ACT['map-reshuffle'] = () => { UI.hidden = null; render(); };
 ACT['map-check'] = async (el) => {
   const nb = curNb(); const n = nb.digest.concept_map.nodes.find((x) => x.id === el.dataset.id); const ans = $('#mapAns').value;
   if (similar(ans, n.label) >= 0.72 || coverage(ans, n.label) >= 0.75) {
-    UI.hidden.set.delete(n.id); toast(`✓ ${n.label}`); await gainXP(5, 'map'); drawMap(nb);
+    UI.hidden.set.delete(n.id); toast(`✓ ${n.label}`); const mx = xpGain(nb, `map:${n.id}`, 5); if (mx) { await save(nb); await gainXP(mx, 'map'); } drawMap(nb);
   } else {
     UI.hidden.tries[n.id] = (UI.hidden.tries[n.id] || 0) + 1; $('#mapAns').classList.add('shake'); setTimeout(() => $('#mapAns')?.classList.remove('shake'), 400);
     if (UI.hidden.tries[n.id] === 2) mapQuiz(nb, n);
@@ -2585,7 +2843,7 @@ function recallSession(el) {
     <div class="card">
       <div class="row between"><span class="row" style="gap:6px"><span class="tag accent">${card.kind === 'picture' ? '🖼️ Picture' : esc(CARD_KIND[card.kind] || card.kind)}</span>${R.scope.startsWith('course:') ? `<span class="tag">${esc(nb.title)}</span>` : R.scope.startsWith('nb:') && R.scope.slice(3) !== nb.id ? `<span class="tag mix-tag" title="Mixed in from another notebook">🔀 ${esc(nb.title)}</span>` : ''}</span>
         <span class="small muted">${R.i + 1} / ${R.queue.length}${Object.values(R.requeued || {}).reduce((x, y) => x + y, 0) ? ` (incl. ${Object.values(R.requeued).reduce((x, y) => x + y, 0)} coming back)` : ''} · ${esc(conceptName(nb, card.concept_id))}</span></div>
-      ${pic.length ? `<div style="margin-top:10px">${shotStrip('rc', pic)}</div>` : card.image ? '<div class="shot-empty" style="margin-top:10px"><span class="spinner"></span> Loading picture…</div>' : ''}
+      ${pic.length ? `<div style="margin-top:10px">${shotStrip('rc', pic)}</div>` : card.image ? (nb.sources.some((s) => s.id === card.image.sid) && !VIS.has(card.image.sid) ? '<div class="shot-empty" style="margin-top:10px"><span class="spinner"></span> Loading picture…</div>' : '<div class="shot-empty" style="margin-top:10px">🖼️ This picture isn’t available any more (its slides were removed). Answer from memory, or skip it.</div>') : ''}
       <div class="q-text">${tx(card.question)}</div>
       ${!res ? `<textarea id="ans" placeholder="Type your answer from memory…${TOUCH ? '' : ' (⌘/Ctrl + Enter to check)'}">${esc(R.draft || '')}</textarea>
         <div class="row" style="margin-top:10px"><span class="small muted">How sure are you?</span>
@@ -2696,11 +2954,14 @@ function quickGrade(response, answer) {
   // Only short, single-fact keys are graded instantly; longer answers carry relationships word-matching can't check.
   const kw = words(answer), rw = words(response);
   if (kw.length > 3 || rw.length > 6) return null;
-  const close = (x, y) => x === y || (x.length > 4 && y.length > 4 && lev(x, y) <= 1);
-  const allKey = kw.every((k) => rw.some((w) => close(w, k)));
-  const extra = rw.filter((w) => !kw.some((k) => close(w, k))).length;
-  const typo = 1 - lev(r, a) / Math.max(r.length, a.length); // whole-answer spelling slip, e.g. "tricuspd valve"
-  return (allKey && extra === 0) || typo >= 0.9 ? ok : null;
+  // Roman numerals (cranial nerves, "Type I/II") must match exactly
+  const roman = (s) => (s.match(/\b[ivx]{1,4}\b/g) || []).filter((x) => /^(i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii)$/.test(x));
+  const rr = roman(r), ar = roman(a); if (rr.length || ar.length) { if (rr.join() !== ar.join()) return null; }
+  // exact words only: A&P is full of one-letter pairs (ileum/ilium, afferent/efferent, abduction/adduction),
+  // so any spelling difference goes to the AI grader instead of being passed here
+  const allKey = kw.every((k) => rw.includes(k));
+  const extra = rw.filter((w) => !kw.includes(w)).length;
+  return allKey && extra === 0 ? ok : null;
 }
 ACT['rc-check'] = async () => {
   const R = UI.recall; const { nb, card } = recallItem(R);
@@ -2719,7 +2980,8 @@ ACT['rc-check'] = async () => {
 ACT['rc-idk'] = () => { const R = UI.recall; R.draft = ''; R.conf = null; R.result = { verdict: 'incorrect', feedback: 'No worries. Read the answer, then say it to yourself once. It’ll come back soon.' }; render(); };
 ACT['rc-anki'] = (el) => { const R = UI.recall; if (!R?.result) return; R.btn = el.dataset.b; ACT['rc-next'](); };
 document.addEventListener('keydown', (e) => { // Anki keys: 1–4 to rate, Space/Enter takes the suggestion
-  const R = UI.recall; if (!R?.result || R.advancing || e.target.closest?.('textarea, input') || route().tab !== 'recall') return;
+  const R = UI.recall; if (!R?.result || R.advancing || e.target.closest?.('textarea, input, select, button, a') || route().tab !== 'recall') return;
+  if (e.metaKey || e.ctrlKey || e.altKey || !$('#modal').classList.contains('hidden') || PM.screen || !$('#tab .anki-row')) return;
   const k = { 1: 'again', 2: 'hard', 3: 'good', 4: 'easy' }[e.key] || ((e.key === ' ' || e.key === 'Enter') && suggestBtn(R));
   if (k) { e.preventDefault(); R.btn = k; ACT['rc-next'](); }
 });
@@ -2737,7 +2999,7 @@ ACT['rc-next'] = async () => {
   render();
 };
 async function recallApply(R) {
-  const { nb, card } = recallItem(R); const btn = R.btn || suggestBtn(R); const v = BTN_V[btn];
+  const { nb, card } = recallItem(R); const btn = R.btn || suggestBtn(R); const v = BTN_V[btn]; const wasDue = (card.srs?.due || 0) <= Date.now();
   schedule(card, btn, R.conf); record(nb, card.concept_id, { again: 0, hard: 0.5, good: R.conf === 'guess' ? 0.6 : 1, easy: 1 }[btn]);
   nb.progress.reviews++; R.tally[v]++;
   if (v === 'incorrect' && R.conf === 'sure') R.confMistakes++;
@@ -2746,7 +3008,11 @@ async function recallApply(R) {
   // due again within a few minutes: bring it back a few cards later in this session (at most twice)
   const n = (R.requeued ||= {})[card.id] || 0;
   if (card.srs.due - Date.now() <= 20 * 60e3 && n < 2) { R.requeued[card.id] = n + 1; R.queue.splice(Math.min(R.queue.length, R.i + 1 + (v === 'incorrect' ? 3 : 5)), 0, { nb: nb.id, card: card.id }); }
-  const xp = (v === 'correct' ? 10 : v === 'partial' ? 5 : 2) + (v === 'correct' && R.conf === 'sure' ? 2 : 0); R.xp += xp;
+  const RANKV = { incorrect: 0, partial: 1, correct: 2 }; const graded = R.result?.verdict;
+  const vx = graded && RANKV[graded] < RANKV[v] ? graded : v; // pressing Easy after "I don't know" doesn't pay like a right answer
+  let xp = (vx === 'correct' ? 10 : vx === 'partial' ? 5 : 2) + (vx === 'correct' && R.conf === 'sure' ? 2 : 0);
+  if (!wasDue) xp = Math.min(xp, 2); // extra practice on cards that weren't due yet: still worth doing, small XP
+  R.xp += xp;
   await save(nb); await gainXP(xp);
   R.i++; R.result = null; R.draft = ''; R.conf = null; R.btn = null;
 }
@@ -2760,7 +3026,7 @@ function recallDone(el) {
   if (total >= 3 && t.correct / total >= 0.8 && !R.cheered) { R.cheered = true; setTimeout(confetti, 150); }
   const nbs = [...new Set(R.queue.map((q) => q.nb))].map(getNb).filter(Boolean);
   const next = nbs.flatMap((nb) => nb.cards).filter((c) => c.srs.due > Date.now()).sort((a, b) => a.srs.due - b.srs.due)[0];
-  const single = R.scope.startsWith('nb:') ? nbs[0] : null;
+  const single = R.scope.startsWith('nb:') ? getNb(R.scope.slice(3)) : null;
   el.innerHTML = `<div class="q-card"><div class="card stack" style="text-align:center">
     <div style="font-size:2.6rem">${total && t.correct / total >= 0.8 ? '🏆' : '💪'}</div><h2>Session complete</h2>
     <div class="row" style="justify-content:center"><span class="tag good">✅ ${t.correct}</span><span class="tag warn">🟡 ${t.partial}</span><span class="tag bad">❌ ${t.incorrect}</span><span class="tag accent">+${R.xp} XP</span></div>
@@ -2823,7 +3089,8 @@ ACT.mic = (el) => {
 
 // ═════════════════════════ TEACH BACK (Feynman) ═════════════════════════
 function renderTeach(nb, el) {
-  const prompts = nb.digest.feynman_prompts;
+  const prompts = nb.digest.feynman_prompts || [];
+  if (!prompts.length) { el.innerHTML = '<div class="card empty"><div class="big">🗣️</div><h3>No teach-back prompts yet</h3><p class="muted" style="margin:0">Rebuild the study kit on the Sources tab, or use the “Teach it back” step at the end of each Learn section.</p></div>'; return; }
   UI.teachSel = Math.min(UI.teachSel ?? 0, prompts.length - 1);
   const p = prompts[UI.teachSel]; const hist = nb.feynman[p.concept_id + ':' + UI.teachSel] || [];
   const last = [...hist].reverse().find((h) => h.result);
@@ -2850,9 +3117,9 @@ function feynmanResult(r) {
   return `<div class="card verdict ${r.verdict}" style="margin:0"><div class="row" style="align-items:flex-start;gap:16px">
     <div class="score-ring" style="--p:${Math.round(r.score)}"><b>${Math.round(r.score)}</b></div>
     <div style="flex:1;min-width:220px"><h3>${esc(vlabel)}</h3>
-      ${r.nailed?.length ? `<div class="small"><b>You nailed</b><ul class="list-good">${r.nailed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-      ${r.gaps?.length ? `<div class="small"><b>Gaps to fill</b><ul class="list-gap">${r.gaps.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-      ${r.misconceptions?.length ? `<div class="small"><b>Misconceptions</b><ul class="list-bad">${r.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+      ${r.nailed?.length ? `<div class="small fb-good"><b>✓ You nailed</b><ul class="list-good">${r.nailed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+      ${r.gaps?.length ? `<div class="small fb-gap"><b>Work on next</b><ul class="list-gap">${r.gaps.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+      ${r.misconceptions?.length ? `<div class="small fb-bad"><b>Careful</b><ul class="list-bad">${r.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
       ${r.better_analogy ? `<div class="small mnemo">🔗 ${esc(r.better_analogy)}</div>` : ''}</div></div></div>`;
 }
 ACT['teach-sel'] = (el) => { UI.teachSel = +el.dataset.i; UI.teachDraft = ''; render(); };
@@ -2866,7 +3133,8 @@ ACT['teach-submit'] = async () => {
       history: hist.map((h) => ({ who: h.who, text: h.who === 'student' ? h.text : `score ${h.result?.score}; follow-up asked: ${h.result?.follow_up_question}` })) });
     hist.push({ who: 'student', text }, { who: 'tutor', result: r });
     record(nb, p.concept_id, Math.min(1, r.score / 100));
-    UI.teachDraft = ''; await save(nb); await gainXP(5 + Math.round((r.score || 0) / 4), 'teach-back');
+    const tx = xpGain(nb, `teach:${UI.teachSel}`, 5 + Math.round(Math.max(0, Math.min(100, r.score || 0)) / 4));
+    UI.teachDraft = ''; await save(nb); if (tx) await gainXP(tx, 'teach-back');
   } catch (e) { aiError(e); }
   UI.teachBusy = false; render();
 };
@@ -2880,7 +3148,7 @@ ACT['teach-self'] = () => {
 ACT['teach-rate'] = async (el) => {
   const nb = curNb(); const p = nb.digest.feynman_prompts[UI.teachSel]; const key = p.concept_id + ':' + UI.teachSel; const v = +el.dataset.v;
   (nb.feynman[key] ||= []).push({ who: 'student', text: $('#teachIn')?.value || UI.teachDraft || '' }, { who: 'tutor', result: { score: v * 100, verdict: v === 1 ? 'solid' : v ? 'developing' : 'needs_work', nailed: [], gaps: [], misconceptions: [], follow_up_question: '', better_analogy: '' } });
-  record(nb, p.concept_id, v); UI.teachDraft = ''; closeModal(); await save(nb); await gainXP(12, 'teach-back'); render();
+  record(nb, p.concept_id, v); UI.teachDraft = ''; closeModal(); const xp = xpGain(nb, `teach:${UI.teachSel}`, Math.round(6 * v)); await save(nb); if (xp) await gainXP(xp, 'teach-back'); render();
 };
 
 // ═════════════════════════ TUTOR (Socratic chat) ═════════════════════════
@@ -2901,7 +3169,7 @@ function renderTutor(nb, el) {
       : `<div class="muted small" style="margin:auto;text-align:center">Ask anything about <b>${esc(nb.title)}</b>.</div>`}</div>
     <div class="chips" style="padding:8px 0">${starters.map((s) => `<button data-act="chat-starter">${esc(s)}</button>`).join('')}</div>
     <form id="chatForm"><textarea id="chatIn" placeholder="${nb.sources.length ? 'Ask or answer… (Enter to send, Shift+Enter for new line)' : 'Add material first'}" ${S.status.claude && nb.sources.length ? '' : 'disabled'}></textarea>
-      <button class="btn primary" type="submit" ${S.status.claude && nb.sources.length ? '' : 'disabled'}>Send</button></form>
+      <button class="btn primary" type="submit" ${S.status.claude && nb.sources.length && !UI.chatBusy ? '' : 'disabled'}>${UI.chatBusy ? 'Thinking…' : 'Send'}</button></form>
     ${S.status.claude ? '' : '<div class="small muted" style="margin-top:6px">The tutor needs the AI — see Settings.</div>'}</div>`;
   const log = $('#chatLog'); log.scrollTop = log.scrollHeight;
   const inp = $('#chatIn');
@@ -2914,24 +3182,28 @@ async function sendChat(nb, text) {
   if (!text || UI.chatBusy) return;
   if (!S.status.claude) return openSettings();
   nb.chat.push({ role: 'user', content: text }); UI.chatBusy = true; render();
-  const log = $('#chatLog'); const bubble = document.createElement('div'); bubble.className = 'msg assistant'; bubble.innerHTML = '<span class="spinner"></span>'; log.appendChild(bubble); log.scrollTop = log.scrollHeight;
+  const log = $('#chatLog') || document.createElement('div'); const bubble = document.createElement('div'); bubble.className = 'msg assistant'; bubble.innerHTML = '<span class="spinner"></span>'; log.appendChild(bubble); log.scrollTop = log.scrollHeight;
   let out = '';
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sources: aiSources(nb), messages: nb.chat.slice(-12) }) });
     if (!r.ok) { const j = await r.json().catch(() => ({})); const e = new Error(j.error || 'Chat failed'); e.code = j.code; throw e; }
-    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = ''; let streamErr = null;
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
       buf += dec.decode(value, { stream: true });
       let k; while ((k = buf.indexOf('\n\n')) >= 0) {
         const line = buf.slice(0, k).replace(/^data: /, ''); buf = buf.slice(k + 2);
-        try { const ev = JSON.parse(line); if (ev.text) { out += ev.text; bubble.innerHTML = md(out); log.scrollTop = log.scrollHeight; } if (ev.error) toast(ev.error, 'err'); } catch { /* partial */ }
+        let ev = null; try { ev = JSON.parse(line); } catch { /* partial */ }
+        if (ev?.text) { out += ev.text; bubble.innerHTML = md(out); log.scrollTop = log.scrollHeight; }
+        if (ev?.error) streamErr = ev;
       }
     }
+    if (streamErr && !out) { const e = new Error(streamErr.error); e.code = streamErr.code; throw e; } // nothing came back: keep your question, offer the fix
+    if (streamErr) toast(streamErr.error, 'err');
     if (out) { nb.chat.push({ role: 'assistant', content: out }); }
-  } catch (e) { aiError(e); nb.chat.pop(); }
+  } catch (e) { aiError(e); nb.chat.pop(); UI.chatDraft = text; }
   UI.chatBusy = false; await save(nb);
-  if (route().tab === 'tutor') render();
+  if (route().tab === 'tutor' && route().id === nb.id) { render(); if (UI.chatDraft) { const i = $('#chatIn'); if (i) { i.value = UI.chatDraft; i.focus(); } UI.chatDraft = ''; } }
 }
 
 // ═════════════════════════ VIDEOS (found on YouTube by Gemini + Google Search) ═════════════════════════
@@ -3058,7 +3330,7 @@ function renderExam(nb, el) {
     <div class="card overview"><h2>📝 Practice exam</h2><p>A fresh, mixed exam: multiple choice + short answer, topics interleaved like the real thing. ${weak.length ? `About half will target your weak spots: <b>${weak.map((w) => esc(w.c.name)).join(', ')}</b>.` : ''}</p>
       <div class="row" style="align-items:flex-end;gap:16px"><div class="field"><span>Questions</span><div class="seg" role="group" aria-label="Number of questions">${[5, 10, 15, 20, 25, 30].map((n) => `<button type="button" class="${(UI.exCount || 15) === n ? 'on' : ''}" data-act="ex-count" data-n="${n}" aria-pressed="${(UI.exCount || 15) === n}">${n}</button>`).join('')}</div></div>
         <label class="check" style="margin-bottom:8px"><input type="checkbox" id="exTimer" checked> Timed (~1.5 min / question)</label></div>
-      <div class="row" style="margin-top:12px">${X?.loading ? '<button class="btn primary lg" disabled><span class="spinner"></span> Writing your exam…</button>' : `<button class="btn primary lg" data-act="exam-gen">${S.status.claude ? 'Generate exam' : 'Start exam from my cards'}</button>`}</div></div>
+      <div class="row" style="margin-top:12px">${X?.loading && X.nb === nb.id ? '<button class="btn primary lg" disabled><span class="spinner"></span> Writing your exam…</button>' : `<button class="btn primary lg" data-act="exam-gen">${S.status.claude ? 'Generate exam' : 'Start exam from my cards'}</button>`}</div></div>
     ${nb.exams.length ? `<div class="card"><h3>Past exams</h3><div class="row" style="align-items:flex-end;gap:6px;height:110px">${nb.exams.slice(-12).map((x) => `<div title="${new Date(x.date).toLocaleDateString()}: ${pct(x.score)}%" style="flex:1;max-width:40px;height:${Math.max(6, pct(x.score))}%;background:var(--accent);border-radius:6px 6px 2px 2px"></div>`).join('')}</div>
       <div class="small muted" style="margin-top:6px">Last: ${pct(nb.exams.at(-1).score)}% · Best: ${pct(Math.max(...nb.exams.map((x) => x.score)))}%</div></div>` : ''}</div>`;
 }
@@ -3080,6 +3352,7 @@ ACT['exam-gen'] = async () => {
   } else questions.forEach((q, k) => { const c = nb.cards.find((x) => x.question === q.question); if (c?.image) questions[k].image = c.image; });
   await loadVisuals(nb);
   questions.forEach((q) => { if (q.type === 'mcq') q.options = [...q.options].sort(() => Math.random() - 0.5); });
+  if (!questions.length) { UI.exam = null; toast('Couldn’t make exam questions this time. Try again.', 'err'); return render(); }
   UI.exam = { nb: nb.id, phase: 'take', questions, answers: questions.map(() => ''), i: 0, start: Date.now(), deadline: timed ? Date.now() + questions.length * 90e3 : 0 };
   render();
 };
@@ -3124,7 +3397,7 @@ ACT['ex-submit'] = async (_el, _e, force) => {
     const c = coverage(a, q.answer); results[i] = { verdict: c >= 0.6 ? 'correct' : c >= 0.35 ? 'partial' : 'incorrect', feedback: 'Auto-checked by keyword overlap. Compare with the answer below.' };
   });
   try { for (let k = 0; k < jobs.length; k += 4) await Promise.all(jobs.slice(k, k + 4).map((f) => f())); }
-  catch (e) { aiError(e); X.phase = 'take'; return render(); }
+  catch (e) { aiError(e); X.phase = 'take'; X.deadline = 0; return render(); } // no auto-resubmit loop when grading can't run
   X.results = results;
   const val = (r) => (r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0);
   const byConcept = {};
@@ -3133,7 +3406,8 @@ ACT['ex-submit'] = async (_el, _e, force) => {
   nb.exams.push({ date: Date.now(), score, total: results.length, byConcept });
   nb.seenExamQs.push(...X.questions.map((q) => q.question)); nb.seenExamQs = nb.seenExamQs.slice(-150);
   X.score = score; X.byConcept = byConcept; X.phase = 'results';
-  await save(nb); await gainXP(Math.round(results.reduce((a, r) => a + val(r) * 10, 0)) + 10, 'exam');
+  const answeredAny = results.some((r) => r && r.verdict && r.verdict !== 'incorrect') || (X.answers || []).some((a) => String(a || '').trim());
+  await save(nb); { const ex = Math.round(results.reduce((a, r) => a + val(r) * 10, 0)) + (answeredAny ? 10 : 0); if (ex) await gainXP(ex, 'exam'); }
   render();
 };
 function examResults(nb, el) {
@@ -3190,7 +3464,7 @@ function renderProfile() {
   <section class="card profile-head plate plate-${plate.style}" style="--pc:${plateColor(plate)}">
     <div class="emb-big">${emblem(rk.i, 96)}</div>
     <div class="spacer stack" style="gap:6px;min-width:0">
-      <input class="name-input" id="profName" maxlength="24" placeholder="Tap to add your name" value="${esc(P.name)}" aria-label="Your name" autocomplete="nickname">
+      <input class="name-input" id="profName" maxlength="20" placeholder="Tap to add your name" value="${esc(P.name)}" aria-label="Your name" autocomplete="nickname">
       <div class="p-title">${WON() ? '👑 ' : ''}${esc(title.name)}</div>
       <div class="p-rank"><b style="color:${rk.r.top ? 'var(--accent)' : rk.r.c}">${esc(rk.label)}</b> · ${S.meta.xp.toLocaleString()} XP</div>
       <div class="meter rr"><i style="width:${rk.next ? pct(rk.into / rk.need) : 100}%"></i></div>
@@ -3228,7 +3502,9 @@ function renderProfile() {
     <p class="small muted" style="margin:0">Your rank and XP live in this browser with your notebooks, and they’re included in backups.</p>
   </section>`;
   $('#profName').addEventListener('change', async (e) => {
-    P.name = e.target.value.replace(/\s+/g, ' ').trim().slice(0, 24); await saveMeta();
+    const nn = e.target.value.replace(/\s+/g, ' ').trim().slice(0, 20);
+    if (S.meta.lbJoined && nn.length < 2) { toast('On the leaderboard your name needs at least 2 characters.', 'err'); e.target.value = P.name; return; }
+    P.name = nn; await saveMeta();
     toast(P.name ? `Nice to meet you, ${P.name} 👋` : 'Name removed'); renderTop(); lbSync(true);
   });
 }
@@ -3258,7 +3534,12 @@ let lbTimer = null;
 function lbSync(now = false) {
   if (!S.status.public || !S.meta.lbJoined || !prof().name) return;
   clearTimeout(lbTimer);
-  lbTimer = setTimeout(() => { lbPost().then(() => { if (route().view === 'leaderboard') lbFetch(true).then(drawLeaderboard).catch(() => {}); }).catch(() => {}); }, now ? 300 : 4000);
+  lbTimer = setTimeout(() => {
+    lbPost().then((j) => {
+      if (j?.throttled) { clearTimeout(lbTimer); lbTimer = setTimeout(() => lbSync(true), Math.min(20000, (j.retryIn || 15000) + 500)); return; }
+      if (route().view === 'leaderboard') lbFetch(true).then(drawLeaderboard).catch(() => {});
+    }).catch((e) => { if (now && !UI.lbWarned) { UI.lbWarned = true; toast(`Leaderboard didn’t update: ${e.message}`, 'err'); } });
+  }, now ? 300 : 4000);
 }
 async function lbFetch(force) {
   if (!force && UI.lb && Date.now() - UI.lb.at < 20000) return UI.lb.data;
@@ -3337,6 +3618,15 @@ function homeLbCard() {
     else { const me = box.querySelector('.lb-row.me'); if (me && me.offsetTop + me.offsetHeight > box.clientHeight) box.scrollTop = me.offsetTop - box.clientHeight / 2 + me.offsetHeight / 2; }
   }).catch(() => { const h = $('#homeLb'); if (h) h.innerHTML = ''; });
 }
+ACT['lb-admin-del'] = async (el) => {
+  const name = el.dataset.n; if (!name || !confirm(`Remove “${name}” from the leaderboard?`)) return;
+  const k = UI.lbAdminKey || prompt('Admin key (LB_ADMIN_KEY from Netlify):') || ''; if (!k) return; UI.lbAdminKey = k;
+  try {
+    const r = await fetch('/edge/lb', { method: 'DELETE', headers: { 'content-type': 'application/json', 'x-admin-key': k }, body: JSON.stringify({ name }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || !j.removed) { UI.lbAdminKey = ''; throw new Error(j.error || 'Not removed (wrong key?)'); }
+    toast(`Removed “${name}”`); UI.lb = null; renderLeaderboard();
+  } catch (e) { toast(e.message, 'err'); }
+};
 ACT['lb-home-tab'] = (el) => { UI.lbHomeTab = el.dataset.v; homeLbCard(); };
 ACT['lb-tab'] = (el) => { UI.lbTab = el.dataset.v; drawLeaderboard(UI.lb?.data); };
 ACT['lb-join'] = () => {
@@ -3414,19 +3704,20 @@ function pmFinish() {
   const was = PM.mode; const keep = { nb: PM.nb };
   if (was === 'focus') {
     const min = Math.round(PM.total / 60); const st = pmStats();
-    const active = S.meta.xp - (PM.xpAtStart ?? S.meta.xp) >= 5; // answered questions during the block
+    const stale = PM.endsAt && Date.now() - PM.endsAt > 5 * 60e3; // you weren't here when it ended
+    const active = !stale && S.meta.xp - (PM.xpAtStart ?? S.meta.xp) >= 5; // answered questions during the block
     const xp = min >= PM_XP_MIN && st.xp < PM_XP_DAY && active ? PM_XP : 0;
-    const why = xp ? '' : min < PM_XP_MIN ? `Blocks under ${PM_XP_MIN} min don’t earn XP.` : !active ? 'Focus XP is for active study: answer some questions (Recall, Learn checks, a test) during the block to earn it.' : `You’ve earned focus XP ${PM_XP_DAY} times today, the daily max. The timer still works.`;
+    const why = xp ? '' : min < PM_XP_MIN ? `Blocks under ${PM_XP_MIN} min don’t earn XP.` : stale ? 'This block ended while you were away, so its minutes count but it doesn’t earn XP.' : !active ? 'Focus XP is for active study: answer some questions (Recall, Learn checks, a test) during the block to earn it.' : `You’ve earned focus XP ${PM_XP_DAY} times today, the daily max. The timer still works.`;
     const cycle = PM.cycle + 1;
     PM = pmFresh(pmBreakNext(cycle), { ...keep, cycle, last: { min, xp, why, nb: PM.nb, round: cycle, at: Date.now() } });
-    PM.screen = 'focusDone';
-    if (PMC.auto) { PM.running = true; PM.started = true; PM.endsAt = Date.now() + PM.total * 1000; PM.screen = 'break'; }
+    PM.screen = stale ? '' : 'focusDone';
+    if (PMC.auto && !stale) { PM.running = true; PM.started = true; PM.endsAt = Date.now() + PM.total * 1000; PM.screen = 'break'; }
     pmSave(); // claim this block before anything async, so a second tab can't count it twice
     const f = (S.meta.focus = S.meta.focus || {}); const k = dayKey();
     for (const n of ['days', 'blocks', 'xp', 'nb']) f[n] = f[n] || {};
     f.days[k] = (f.days[k] || 0) + min; f.blocks[k] = (f.blocks[k] || 0) + 1; if (keep.nb) f.nb[keep.nb] = (f.nb[keep.nb] || 0) + min;
     if (xp) { f.xp[k] = (f.xp[k] || 0) + 1; gainXP(xp, 'focus block'); } else saveMeta();
-    pmChime(true); pmNotify('Focus done ✓', `${xp ? `+${xp} XP. ` : ''}Time for a ${Math.round(pmDur(PM.mode) / 60)}-minute break.`);
+    if (stale) toast(why); else pmChime(true), pmNotify('Focus done ✓', `${xp ? `+${xp} XP. ` : ''}Time for a ${Math.round(pmDur(PM.mode) / 60)}-minute break.`);
   } else {
     PM = pmFresh('focus', { ...keep, cycle: was === 'long' ? 0 : PM.cycle, last: PM.last });
     PM.screen = 'breakDone'; pmSave();
@@ -3509,15 +3800,16 @@ function drawPill() {
 function pmPlace() {
   const el = document.getElementById('pomoPill'); if (!el || el.hidden || el.classList.contains('drag')) return;
   const pad = 12, W = document.documentElement.clientWidth, H = window.innerHeight;
-  let top = (document.querySelector('.topbar')?.getBoundingClientRect().bottom || 56) + 10;
-  const tabs = document.querySelector('.tabs-bar')?.getBoundingClientRect(); // stay clear of a notebook's tab bar near the top
-  if (tabs && tabs.height && tabs.top < top + el.offsetHeight) top = Math.max(top, tabs.bottom + 8);
+  const bar = document.querySelector('.topbar'); let top = (bar ? bar.offsetHeight : 56) + 10;
+  const tabs = document.querySelector('.tabs-bar'); // on notebook pages, sit below where the tab bar pins, so it never needs to move while you scroll
+  if (tabs && tabs.offsetHeight) top += tabs.offsetHeight;
   const probe = UI.pmProbe || (UI.pmProbe = Object.assign(document.createElement('div'), { style: 'position:fixed;bottom:0;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden' }));
   if (!probe.isConnected) document.body.appendChild(probe);
   const bottom = (probe.offsetHeight || 0) + 18;
   const c = PMC.corner || 'tr';
   el.style.left = Math.max(pad, c[1] === 'l' ? pad : W - el.offsetWidth - pad) + 'px';
-  el.style.top = Math.max(top, c[0] === 't' ? top : H - el.offsetHeight - bottom) + 'px';
+  if (c[0] === 't') { el.style.top = top + 'px'; el.style.bottom = ''; }
+  else { el.style.top = 'auto'; el.style.bottom = `calc(${bottom}px)`; }
 }
 function pmDragSetup(el) {
   let D = null;
@@ -3529,7 +3821,7 @@ function pmDragSetup(el) {
   el.addEventListener('pointermove', (e) => {
     if (!D) return;
     if (!D.moved && Math.hypot(e.clientX - D.x, e.clientY - D.y) < 6) return;
-    D.moved = true; el.classList.add('drag');
+    D.moved = true; el.classList.add('drag'); el.style.bottom = '';
     const W = document.documentElement.clientWidth, H = window.innerHeight;
     el.style.left = Math.min(W - el.offsetWidth - 4, Math.max(4, e.clientX - D.ox)) + 'px';
     el.style.top = Math.min(H - el.offsetHeight - 4, Math.max(4, e.clientY - D.oy)) + 'px';
@@ -3546,7 +3838,7 @@ function pmDragSetup(el) {
 }
 window.addEventListener('resize', () => pmPlace());
 window.addEventListener('hashchange', () => setTimeout(pmPlace, 60)); // a new page may add or remove the tab bar
-window.addEventListener('scroll', () => { if (UI.pmRaf || !PM.started || (PMC.corner || 'tr')[0] !== 't') return; UI.pmRaf = requestAnimationFrame(() => { UI.pmRaf = 0; pmPlace(); }); }, { passive: true });
+// (the pill no longer moves while scrolling; it's placed once per page and on resize)
 
 function pmScreenHTML() {
   const L = PM.last; const nb = L?.nb ? getNb(L.nb) : null;
@@ -3688,15 +3980,60 @@ ACT.export = async () => {
   const blob = new Blob([JSON.stringify({ app: 'encode', version: 2, exported: Date.now(), meta: S.meta, notebooks: S.notebooks, visuals })], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `etch-backup-${dayKey()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 };
+// Backups can come from anywhere (a classmate, an old device): check everything before saving any of it.
+const SAFE_ID = /^[A-Za-z0-9_-]{3,64}$/;
+const IMG_DATA = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+function validNotebook(nb) {
+  if (!nb || typeof nb !== 'object' || !SAFE_ID.test(String(nb.id))) return false;
+  if (!Array.isArray(nb.sources) || !Array.isArray(nb.cards)) return false;
+  if (nb.sources.some((s) => !s || !SAFE_ID.test(String(s.id)))) return false;
+  if (nb.digest) {
+    if (!Array.isArray(nb.digest.concepts) || !Array.isArray(nb.digest.cards)) return false;
+    if (nb.digest.concepts.some((c) => !SAFE_ID.test(String(c.id)))) return false;
+    if ((nb.digest.concept_map?.nodes || []).some((n) => !SAFE_ID.test(String(n.id)))) return false;
+  }
+  return true;
+}
 async function importData(e) {
-  const f = e.target.files[0]; if (!f) return;
+  const input = e.target; const f = input.files[0]; if (!f) return;
   try {
     const data = JSON.parse(await f.text()); if (data.app !== 'encode') throw new Error('Not an Etch backup');
-    for (const v of data.visuals || []) await DB.put('visuals', v);
-    for (const nb of data.notebooks) { const i = S.notebooks.findIndex((n) => n.id === nb.id); if (i >= 0) S.notebooks[i] = nb; else S.notebooks.push(nb); await DB.put('notebooks', nb); }
-    S.meta.xp = Math.max(S.meta.xp, data.meta?.xp || 0); S.meta.days = { ...(data.meta?.days || {}), ...S.meta.days }; await saveMeta();
-    toast(`Imported ${data.notebooks.length} notebook(s)`); closeModal(); render();
+    if (!Array.isArray(data.notebooks)) throw new Error('The file has no notebooks');
+    const good = data.notebooks.filter(validNotebook); const bad = data.notebooks.length - good.length;
+    // fill in fields older backups may not have, and drop anything that isn't real image data
+    for (const nb of good) {
+      Object.assign(nb, { illustrations: nb.illustrations || {}, feynman: nb.feynman || {}, chat: Array.isArray(nb.chat) ? nb.chat : [], exams: Array.isArray(nb.exams) ? nb.exams : [],
+        videos: Array.isArray(nb.videos) ? nb.videos : [], seenExamQs: Array.isArray(nb.seenExamQs) ? nb.seenExamQs : [], conceptStats: nb.conceptStats || {},
+        pretest: nb.pretest || { done: false, answers: [] }, progress: nb.progress || { learn: false, reviews: 0 }, updated: Number(nb.updated) || 0 });
+      for (const [k, v] of Object.entries(nb.illustrations)) if (!v || (v.kind !== 'svg' && !IMG_DATA.test(String(v.src || '')))) delete nb.illustrations[k];
+      nb.cards = nb.cards.filter((c) => c && c.question && c.srs);
+    }
+    const ids = new Set(good.flatMap((nb) => nb.sources.map((s) => s.id)));
+    for (const v of data.visuals || []) {
+      if (!v || !ids.has(v.id) || !Array.isArray(v.items)) continue;
+      v.items = v.items.filter((it) => it && IMG_DATA.test(String(it.src || '')));
+      await DB.put('visuals', v);
+    }
+    let kept = 0;
+    for (const nb of good) {
+      const i = S.notebooks.findIndex((n) => n.id === nb.id);
+      if (i >= 0 && (S.notebooks[i].updated || 0) > (nb.updated || 0)) { kept++; continue; } // this device has newer work: keep it
+      if (i >= 0) S.notebooks[i] = nb; else S.notebooks.push(nb);
+      await DB.put('notebooks', nb);
+    }
+    const m = data.meta || {};
+    if (Number.isFinite(+m.xp)) S.meta.xp = Math.max(S.meta.xp, Math.floor(+m.xp));
+    const days = {}; for (const [k, v] of Object.entries(m.days || {})) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && Number.isFinite(+v)) days[k] = Math.max(0, Math.floor(+v));
+    S.meta.days = { ...days, ...S.meta.days };
+    // moving to a new device: bring your name, look and leaderboard identity along if this device has none yet
+    if (m.profile && typeof m.profile === 'object' && !S.meta.profile?.name) S.meta.profile = { ...m.profile, name: String(m.profile.name || '').slice(0, 20) };
+    if (!S.meta.lbId && /^[a-f0-9]{32}$/.test(String(m.lbId || ''))) { S.meta.lbId = m.lbId; S.meta.lbJoined = !!m.lbJoined; }
+    if (Array.isArray(m.lbWins) && !S.meta.lbWins?.length) S.meta.lbWins = m.lbWins;
+    await saveMeta();
+    toast(`Imported ${good.length - kept} notebook(s)${kept ? ` · kept ${kept} newer one(s) already here` : ''}${bad ? ` · skipped ${bad} damaged one(s)` : ''}`);
+    closeModal(); render();
   } catch (err) { toast('Import failed: ' + err.message, 'err'); }
+  finally { input.value = ''; } // choosing the same file again works
 }
 
 // ───────────────────────── boot ─────────────────────────
@@ -3718,7 +4055,9 @@ async function importData(e) {
   lbSync(true);
   // Coming back to this tab: pick up anything changed on another device/tab (unless mid-session).
   document.addEventListener('visibilitychange', async () => {
-    if (document.hidden || UI.recall?.queue?.length > UI.recall?.i || UI.exam?.phase === 'take' || UI.building || UI.chatBusy || UI.teachBusy) return;
+    const busy = (m) => m && (typeof m !== 'object' || Object.values(m).some(Boolean));
+    if (document.hidden || UI.recall?.queue?.length > UI.recall?.i || UI.exam?.phase || UI.building || UI.chatBusy || UI.teachBusy
+      || [UI.lessonBusy, UI.deepBusy, UI.testBusy, UI.teachBackBusy, UI.illBusy, UI.vidBusy, UI.lessonHelpBusy, UI.paraGrading].some(busy)) return;
     try {
       const data = await DB.load();
       const stamp = (list) => list.map((n) => n.id + n.updated).sort().join();
