@@ -274,7 +274,7 @@
     recallCheck: obj({ hits: arr(obj({ got: { type: 'boolean' }, note: S })) }),
     sectionTest: obj({
       mcq: arr(obj({ question: S, options: SA, answer: S, explanation: S, concept_id: S, review: { type: 'boolean' } })),
-      paragraph: obj({ prompt: S, key_points: SA, model: S }),
+      paragraphs: arr(obj({ prompt: S, key_points: SA, model: S })),
     }),
     paragraph: obj({ score: N, verdict: { type: 'string', enum: ['correct', 'partial', 'incorrect'] }, covered: SA, missing: SA, misconceptions: SA, feedback: S }),
     videoPlan: obj({ searches: arr(obj({ query: S, concept_id: S, level: S, why: S, watch_for: SA })) }),
@@ -312,23 +312,30 @@ Only teach what the material supports; where it's thin, keep it simple rather th
 general rules, numbers or cause-and-effect claims the material doesn't state. Describe tests and instruments (ECG,
 blood pressure cuff, imaging) as measuring or recording, never as causing or controlling. Don't re-teach earlier
 sections or jump ahead to later ones. Never cite slide or page numbers anywhere.`,
-    section_test: `Write a short end-of-section test for a student who just learned this section for the first time.
-- mcq: 6 questions, each with exactly 4 options in random order; answer = the exact text of the correct option.
-  Use plausible distractors based on common confusions. Mix: one recall, three understanding (why/how), and two
-  apply questions (a short clinical or real-life scenario). Each must test the idea from a NEW angle: never re-ask a
-  listed quick-check question or one with the same answer, even reworded. Use plain, simple wording.
-  Keep each option ≤14 words. explanation: ≤25 words on why it's right; name the most tempting wrong option by its
-  wording (never "option B").
-- paragraph: prompt = one question the student answers in a paragraph (4–6 sentences) that makes them explain and
-  connect the section's main ideas ("Explain how … and why …"). key_points: the 3–5 points a strong answer includes.
-  model: a model answer of ≤80 words in plain language.
-- concept_id on each mcq: the id of the concept it tests (from the given ids). review: false, except as below.
-- If earlier sections are listed, make the LAST TWO mcqs review questions about earlier sections (review: true) so
-  the student keeps older material fresh. If none are listed, all are about this section. Never ask about later
-  sections' topics.
-- Never make three options the same kind of thing so the odd one out is obviously right. No absurd options.
-- Never cite slide or page numbers, including in explanations and the model answer.
-Only test what the lessons taught; don't add rules or numbers the material doesn't state.`,
+    section_test: `Write the end-of-section test for a student who just learned this section for the first time.
+- mcq: 16 CANDIDATE questions (the app keeps the best 10 after removing repeats). Each has exactly 4 options in random
+  order; answer = the exact text of the correct option; options ≤14 words; plausible distractors from common
+  confusions; never three options of the same kind so the odd one out is obviously right; no absurd options.
+  VARIETY IS REQUIRED: every question must test a DIFFERENT fact or angle, and no two questions may share the same
+  correct answer. Spread them across these formats (at least 6 different formats in total):
+  why/how it works · cause → effect · predict what happens if something changes or fails · short patient scenario
+  (nursing/clinical) · compare/contrast two structures or phases · put steps in order ("what happens next/first") ·
+  "which statement is NOT true" · function of a named structure · interpret a number or measurement · apply a rule
+  to a new example. At most 2 plain-definition questions.
+  Never re-ask or reword a listed quick-check question or an already-seen question, and never test the same fact as
+  one of them, even with different wording.
+  explanation: ≤25 words on why it's right; name the most tempting wrong option by its wording (never "option B").
+  concept_id: the id of the concept it tests (from the given ids). review: false, except as below.
+  If earlier sections are listed, make the LAST 3 candidates review questions about earlier sections (review: true).
+  Never ask about later sections' topics (e.g. don't test ECG waves or cardiac output if those come in a later
+  section): every non-review question must be about THIS section's concepts, and concept_id must say which.
+- paragraphs: exactly 2 free-response prompts that test DIFFERENT angles, each answered in 4–6 sentences:
+  1) explain the mechanism/process step by step and why it happens;
+  2) apply it: a short patient or real-life scenario to reason through, or connect it to another section.
+  key_points: the 3–5 points a strong answer includes. model: a model answer of ≤80 words in plain language.
+  Neither prompt may repeat a quick-check or mcq question.
+Use plain, simple wording. Only test what the lessons taught; don't add rules or numbers the material doesn't state.
+Never cite slide or page numbers anywhere.`,
     paragraph: `Grade a student's paragraph answer to an end-of-section question. Judge meaning, not wording; accept
 synonyms and minor misspellings. score 0–100 for how many key points are covered correctly and clearly, minus for
 wrong statements. verdict: "correct" if score ≥ 80, "partial" if 40–79, "incorrect" below 40. covered: the key points
@@ -378,9 +385,13 @@ lecture material. Never contradict the material. Don't cite slide or page number
   option by its wording, never "option B"). concept_id from the given ids. Never repeat the already-asked questions.
 - connections: 2–4 one-line links to other sections of this lecture or other body systems.`,
     dedupe: `A student has already answered the ALREADY ASKED questions. For each CANDIDATE question, decide if it is a
-repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently (e.g. "Why don't
-valves need muscles?" and "Why do valves work passively?" are repeats). A candidate that tests a different fact,
-direction, structure or step is NOT a repeat. Return the numbers of the repeat candidates (empty if none).`,
+repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently or in plain
+everyday words (e.g. "Why don't valves need muscles?" = "Why do valves work passively?"; "What happens to the blood in
+the lower chamber if the top room can't squeeze?" = "If atrial contraction fails, what happens to ventricular
+volume?"). Compare the answers given in brackets: the same answer to the same situation means a repeat. A candidate that tests a different fact,
+direction, structure or step is NOT a repeat. ALSO mark a candidate as a repeat if it tests the same fact or has the
+same correct answer as an EARLIER candidate in the list (keep the first one). Return the numbers of the repeat
+candidates (empty if none).`,
     open_questions: `Turn each multiple-choice question into an open question a student can answer from memory with no
 options shown. Keep the same fact being tested. Never use "Which of the following". answer = the correct answer in
 ≤20 plain words. Return one item per question, in order.`,
@@ -512,7 +523,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
         (p.earlier || []).length ? 'Earlier sections (for the review questions):' : 'No earlier sections.',
         ...(p.earlier || []).map((e) => `- ${e.title}: ${(e.points || []).join('; ')}`),
         'Write the section test now.'].filter(Boolean).join('\n');
-      return callJSON({ sources: p.sources, task: TASK.section_test, parts: msg, schema: SCHEMA.sectionTest, thinking: 512, maxTokens: 6000, wait: 90000 });
+      return callJSON({ sources: p.sources, task: TASK.section_test, parts: msg, schema: SCHEMA.sectionTest, thinking: 512, maxTokens: 16000, wait: 150000 });
     },
     async paragraph(p) {
       const msg = `Question: ${p.prompt || ''}\nKey points a strong answer includes:\n${(p.key_points || []).map((x) => `- ${x}`).join('\n')}\nModel answer: ${p.model || ''}\nStudent's paragraph:\n${fence(p.response)}`;
@@ -545,7 +556,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
     },
     dedupe(p) {
       const msg = `ALREADY ASKED:\n${(p.asked || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\nCANDIDATES:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
-      return callJSON({ task: TASK.dedupe, parts: msg, schema: SCHEMA.dedupe, thinking: 256, maxTokens: 600, tier: 'lite' });
+      return callJSON({ task: TASK.dedupe, parts: msg, schema: SCHEMA.dedupe, thinking: 512, maxTokens: 4000 }); // room for thinking + the short list
     },
     open_questions(p) {
       const msg = (p.items || []).map((x, i) => `${i + 1}. ${x.question}\nOptions: ${(x.options || []).join(' | ')}\nCorrect: ${x.answer}`).join('\n\n');

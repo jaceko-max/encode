@@ -1765,7 +1765,7 @@ function lessonStageHTML(nb, i, L, s, steps) {
     <p class="pm-xp">${esc(inf.label.replace(/^Done ✓ ·? ?/, '')) || 'Nice work'}</p>
     ${(() => { const cs = Object.values(L.checks || {}).filter((c) => c.conf === 'sure'); if (!cs.length) return ''; const ok = cs.filter((c) => (c.first ?? c.ok) >= 1).length;
       return `<div class="small" style="text-align:center">🎯 When you felt sure, you were right ${ok} of ${cs.length}${ok < cs.length ? '. The sure-but-wrong ones come back in Recall today.' : '. Nicely calibrated!'}</div>`; })()}
-    ${(() => { const sc = testScore(L); if (!sc || !sc.answered && sc.para === null) return ''; return `<div class="test-results"><span><b>${sc.right}/${sc.total}</b> multiple choice</span>${sc.para !== null ? `<span><b>${Math.round(sc.para)}%</b> paragraph</span>` : ''}</div>`; })()}</div>
+    ${(() => { const sc = testScore(L); if (!sc || !sc.answered && sc.para === null) return ''; return `<div class="test-results"><span><b>${sc.right}/${sc.total}</b> multiple choice</span>${sc.para !== null ? `<span><b>${Math.round(sc.para)}%</b> free response</span>` : ''}</div>`; })()}</div>
     ${d.summary?.length ? `<div class="lesson-box plain"><b>Takeaways</b><ul>${d.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     ${d.mnemonic ? `<div class="lesson-box ex"><b>🧠 Memory hook</b><div>${esc(d.mnemonic)}</div></div>` : ''}
     ${teachBackHTML(nb, i, L)}
@@ -1778,7 +1778,9 @@ function lessonStageHTML(nb, i, L, s, steps) {
     <div class="small muted" style="text-align:center">A retake runs the lesson again with a brand-new test, so you’re recalling, not remembering the same questions.</div>`;
 }
 
-// ── end-of-section test: 4 multiple-choice questions + one paragraph, written by the AI the first time you reach it ──
+// ── end-of-section test: 10 varied multiple-choice questions + 2 free-response questions, written by the AI the first
+// time you reach it. Nothing may repeat a quick check, an earlier section's question, or another question in the test. ──
+const TEST_MCQ = 10, TEST_FR = 2;
 function shuffleOpts(q) {
   const opts = (q.options || []).filter(Boolean);
   const hit = opts.find((o) => norm(o) === norm(q.answer)) || opts.find((o) => similar(o, q.answer) > 0.85);
@@ -1786,10 +1788,16 @@ function shuffleOpts(q) {
   for (let k = opts.length - 1; k > 0; k--) { const r = Math.floor(Math.random() * (k + 1)); [opts[k], opts[r]] = [opts[r], opts[k]]; }
   return { question: q.question, options: opts, answer: hit, explanation: q.explanation || '', concept_id: q.concept_id || '', review: !!q.review };
 }
+// older saved tests had one "paragraph"; newer ones have a list of free responses
+function testFRs(T) { if (!T) return []; if (!T.paragraphs && T.paragraph) T.paragraphs = [T.paragraph]; return T.paragraphs || []; }
+function testFRAnswers(T) { if (!T.paras) T.paras = T.para ? { 0: T.para } : {}; return T.paras; }
 function localTest(nb, i, L) {
   const c = nb.digest.cards[i];
   const mcq = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.type === 'mcq').map(shuffleOpts).filter(Boolean).slice(0, 4);
-  return { fallback: true, mcq, paragraph: { prompt: `In a paragraph, explain ${c.title.toLowerCase()} in your own words. Connect the ideas and say why they matter.`, key_points: c.points, model: '' } };
+  return { fallback: true, mcq, paragraphs: [
+    { prompt: `In a paragraph, explain ${c.title.toLowerCase()} step by step in your own words, and say why each step happens.`, key_points: c.points, model: '' },
+    { prompt: `Describe a situation (in the body or a patient) where ${c.title.toLowerCase()} matters, and explain what would go wrong if it didn't work.`, key_points: c.points.slice(0, 3), model: '' },
+  ] };
 }
 function seenQuestions(nb, skip) {
   const out = [];
@@ -1797,6 +1805,7 @@ function seenQuestions(nb, skip) {
     if (!L?.data) continue;
     if (+k !== skip) for (const s of L.data.steps || []) if (s.check?.question) out.push({ q: s.check.question, a: s.check.answer });
     if (+k !== skip) for (const q of L.test?.mcq || []) out.push({ q: q.question, a: q.answer });
+    if (+k !== skip) for (const p of testFRs(L.test)) out.push({ q: p.prompt, a: '' });
     for (const q of L.pastTests || []) if (+k === skip) out.push(q);
   }
   return out;
@@ -1812,45 +1821,80 @@ async function buildTest(nb, i) {
         used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean),
         seen: seenQuestions(nb, i).slice(-40).map((x) => x.q.slice(0, 160)),
         concepts: nb.digest.concepts.map((x) => ({ id: x.id, name: x.name })),
-        earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 2).map((x) => ({ title: x.title, points: x.points })) });
+        earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 3).map((x) => ({ title: x.title, points: x.points })) });
       const used = [...(L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer })), ...seenQuestions(nb, i)];
-      const all = (r.mcq || []).map(shuffleOpts).filter(Boolean);
-      // a test question repeats a quick check if the wording is close, or the answer is the same and the topic similar
-      const same = (q, u) => { const qq = Math.max(coverage(q.question, u.q), coverage(u.q, q.question)); const aa = Math.min(coverage(q.answer, u.a), coverage(u.a, q.answer)); return qq >= 0.5 || (aa >= 0.6 && qq >= 0.3); };
-      // same meaning in different words: ask the AI which candidates repeat something already asked
+      // only this section and earlier ones: drop questions about concepts that are first taught in a later section
+      const known = new Set(nb.digest.cards.slice(0, i + 1).flatMap((x) => x.concept_ids || []));
+      const allIds = new Set(nb.digest.concepts.map((x) => x.id));
+      const all = (r.mcq || []).map(shuffleOpts).filter(Boolean).filter((q) => !q.concept_id || !allIds.has(q.concept_id) || known.has(q.concept_id));
+      // a repeat: close wording, or the same answer on a similar topic
+      // word overlap only catches near-identical questions (both ways); repeats in different words are left to the AI check above
+      const same = (q, u) => { const qq = Math.min(coverage(q.question, u.q), coverage(u.q, q.question)); const aa = u.a ? Math.min(coverage(q.answer, u.a), coverage(u.a, q.answer)) : 0; return qq >= 0.6 || (aa >= 0.7 && qq >= 0.35) || (!!u.a && norm(q.answer) === norm(u.a)); };
+      // same meaning in different words (vs. what was already asked, and inside this test): ask the AI
       let aiRepeat = new Set();
       try {
-        const d = await ai('dedupe', { asked: used.map((u) => u.q).slice(-40), candidates: all.map((q) => q.question) });
+        const d = await ai('dedupe', { asked: used.slice(-40).map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) });
         aiRepeat = new Set((d.repeats || []).map((n) => n - 1));
       } catch { /* word-overlap check below still runs */ }
       const picked = [];
       all.forEach((q, n) => { if (!aiRepeat.has(n) && !used.some((u) => same(q, u)) && !picked.some((p) => same(q, { q: p.question, a: p.answer }))) picked.push(q); });
-      const review = picked.filter((q) => q.review).slice(0, 1);
-      let mcq = [...picked.filter((q) => !q.review).slice(0, review.length ? 3 : 4), ...review];
-      if (mcq.length < 3) mcq = [...mcq, ...all.filter((q) => !mcq.includes(q))].slice(0, 4); // never fewer than 3–4 questions
-      if (!mcq.length || !r.paragraph?.prompt) throw new Error('The test came back incomplete. Try again.');
-      t = tidyDeep({ mcq, paragraph: r.paragraph });
+      const review = picked.filter((q) => q.review).slice(0, 2);
+      let mcq = [...picked.filter((q) => !q.review).slice(0, TEST_MCQ - review.length), ...review];
+      if (mcq.length < TEST_MCQ) { // top up only with questions that don't share wording or an answer with anything already in the test
+        all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n)) return; if (!mcq.includes(q) && !mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); }); // never re-add a flagged repeat: fewer questions beats a repeat
+      }
+      // second, independent repeat check on the final picks (the AI judge isn't perfectly consistent, so two passes catch more)
+      try {
+        const d2 = await ai('dedupe', { asked: used.slice(-40).map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: mcq.map((q) => `${q.question} (answer: ${q.answer})`) });
+        const drop = new Set((d2.repeats || []).map((n) => n - 1));
+        if (drop.size) {
+          mcq = mcq.filter((_, n) => !drop.has(n));
+          all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n) || mcq.includes(q)) return; if (!mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); });
+        }
+      } catch { /* keep the first pass */ }
+      mcq.sort((x, y) => (x.review ? 1 : 0) - (y.review ? 1 : 0)); // review questions last
+      const frs = (r.paragraphs || []).filter((p) => p?.prompt).slice(0, TEST_FR);
+      if (mcq.length < 3 || !frs.length) throw new Error('The test came back incomplete. Try again.');
+      t = tidyDeep({ mcq, paragraphs: frs });
       CAUSE_RX.lastIndex = 0;
       if (CAUSE_RX.test(textOf(t)) || OPTION_RX.test(textOf(t))) { await factCheck(nb, t); fixCauseClaims(t); t.mcq = t.mcq.map(shuffleOpts).filter(Boolean); }
       CAUSE_RX.lastIndex = 0;
     } catch (e) { if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the section test with AI (${e.message}). Using a shorter one.`, 'err'); }
   }
-  L.test = { ...(t || localTest(nb, i, L)), answers: {}, para: null };
+  L.test = { ...(t || localTest(nb, i, L)), answers: {}, paras: {} };
   delete UI.testBusy[key]; await save(nb);
 }
 function testScore(L) {
   const T = L.test; if (!T) return null;
   const right = T.mcq.filter((q, k) => T.answers[k] === q.answer).length;
-  return { right, total: T.mcq.length, answered: Object.keys(T.answers).length, para: T.para?.result?.score ?? null };
+  const frs = testFRs(T); const fa = testFRAnswers(T);
+  const graded = frs.map((_, p) => fa[p]?.result?.score).filter((x) => typeof x === 'number');
+  return { right, total: T.mcq.length, answered: Object.keys(T.answers).length, frDone: graded.length, frTotal: frs.length,
+    para: frs.length && graded.length === frs.length ? Math.round(graded.reduce((a, b) => a + b, 0) / graded.length) : null };
+}
+function frHTML(nb, i, T, p) {
+  const key = `${nb.id}:${i}:${p}`; const P = testFRs(T)[p]; const A = testFRAnswers(T)[p]; const R = A?.result; const grading = UI.paraGrading === key;
+  const body = R ? `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(A.text)}</div></div>
+      <div class="verdict ${R.verdict}"><div class="row between"><h3>${{ correct: '✓ Strong answer', partial: '◐ Good start', incorrect: '✗ Needs more' }[R.verdict] || 'Graded'}</h3><b>${Math.round(R.score)}%</b></div>
+        <div class="meter" style="margin:6px 0 8px"><i style="width:${Math.round(R.score)}%"></i></div>
+        ${R.feedback ? `<div>${esc(R.feedback)}</div>` : ''}
+        ${R.covered?.length ? `<div class="small" style="margin-top:8px"><b>You covered:</b><ul class="list-good">${R.covered.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${R.missing?.length ? `<div class="small"><b>Add next time:</b><ul>${R.missing.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${R.misconceptions?.length ? `<div class="small"><b>Watch out:</b><ul>${R.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${P.model ? `<details class="small" style="margin-top:6px"><summary>See a model answer</summary><p style="margin:6px 0 0">${esc(P.model)}</p></details>` : ''}</div>`
+    : `<textarea data-fr="${p}" rows="6" placeholder="Write 4–6 sentences…" ${grading ? 'disabled' : ''}>${esc(UI.paraDraft?.[key] || '')}</textarea>
+      <div class="row"><button class="btn primary" data-act="test-para" data-p="${p}" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Grading…' : 'Submit answer'}</button>
+        <span class="small muted fr-count">${wordCount(UI.paraDraft?.[key] || '')} words</span></div>`;
+  return `<div class="test-q"><div class="test-qh"><span class="test-n">${String.fromCharCode(65 + p)}</span><b>${esc(P.prompt)}</b></div>${body}</div>`;
 }
 function testStageHTML(nb, i, L) {
   const key = `${nb.id}:${i}`; const T = L.test;
   if (!T) {
     if (!UI.testBusy?.[key]) buildTest(nb, i).then(() => { if (route().tab === 'lessons' && +route().arg === i) lessonShow(nb, i); });
     return `<div class="lesson-kicker">Section test</div><h2>Writing your test…</h2><div class="spinner lg" style="margin:10px auto"></div>
-      <p class="muted" style="text-align:center;margin:0">4 multiple-choice questions and one paragraph question. Usually about 10 seconds.</p>`;
+      <p class="muted" style="text-align:center;margin:0">${TEST_MCQ} multiple-choice questions and ${TEST_FR} free-response questions, all different. Usually 20–40 seconds.</p>`;
   }
-  const sc = testScore(L); const P = T.para; const grading = UI.paraGrading === key;
+  const sc = testScore(L); const frs = testFRs(T);
   const mcqHTML = T.mcq.map((q, k) => {
     const a = T.answers[k];
     return `<div class="test-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${q.review ? '<span class="tag review-tag">Review · earlier section</span> ' : ''}${esc(q.question)}</b></div>
@@ -1860,26 +1904,13 @@ function testStageHTML(nb, i, L) {
       }).join('')}</div>
       ${a !== undefined && q.explanation ? `<div class="small test-exp ${a === q.answer ? 'ok' : 'no'}">${a === q.answer ? '✓' : '✗'} ${esc(q.explanation)}</div>` : ''}</div>`;
   }).join('');
-  const R = P?.result;
-  const paraHTML = R ? `<div class="lesson-mine"><span class="small muted">Your paragraph</span><div>${esc(P.text)}</div></div>
-      <div class="verdict ${R.verdict}"><div class="row between"><h3>${{ correct: '✓ Strong answer', partial: '◐ Good start', incorrect: '✗ Needs more' }[R.verdict] || 'Graded'}</h3><b>${Math.round(R.score)}%</b></div>
-        <div class="meter" style="margin:6px 0 8px"><i style="width:${Math.round(R.score)}%"></i></div>
-        ${R.feedback ? `<div>${esc(R.feedback)}</div>` : ''}
-        ${R.covered?.length ? `<div class="small" style="margin-top:8px"><b>You covered:</b><ul class="list-good">${R.covered.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-        ${R.missing?.length ? `<div class="small"><b>Add next time:</b><ul>${R.missing.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-        ${R.misconceptions?.length ? `<div class="small"><b>Watch out:</b><ul>${R.misconceptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-        ${T.paragraph.model ? `<details class="small" style="margin-top:6px"><summary>See a model answer</summary><p style="margin:6px 0 0">${esc(T.paragraph.model)}</p></details>` : ''}</div>`
-    : `<textarea id="lessonP" rows="6" placeholder="Write 4–6 sentences…" ${grading ? 'disabled' : ''}>${esc(UI.paraDraft?.[key] || '')}</textarea>
-      <div class="row"><button class="btn primary" data-act="test-para" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Grading…' : 'Submit paragraph'}</button>
-        <span class="small muted">${wordCount(UI.paraDraft?.[key] || '')} words</span></div>`;
   return `<div class="lesson-kicker">Section test</div><h2>Show what you learned</h2>
-    <p class="muted" style="margin:0">No peeking at your notes. ${sc.answered}/${sc.total} answered${sc.answered ? ` · ${sc.right} right` : ''}.</p>
-    ${T.fallback && !sc.answered && !T.para ? '<div class="small muted">This is a shorter test made from your lesson. <a href="#" data-act="test-rewrite">✨ Write a full test with AI</a></div>' : ''}
-    <div class="test-part"><h3>Part 1 · Multiple choice</h3>${mcqHTML}</div>
-    <div class="test-part"><h3>Part 2 · Paragraph</h3>
-      <div class="test-q"><b>${esc(T.paragraph.prompt)}</b>
-      <div class="small muted" style="margin:2px 0 4px">📝 Jot 3 bullets on paper first, then write it here.</div>
-      ${paraHTML}</div></div>`;
+    <p class="muted" style="margin:0">No peeking at your notes. Multiple choice: ${sc.answered}/${sc.total} answered${sc.answered ? ` · ${sc.right} right` : ''}. Free response: ${sc.frDone}/${sc.frTotal} done.</p>
+    ${T.fallback && !sc.answered && !sc.frDone ? '<div class="small muted">This is a shorter test made from your lesson. <a href="#" data-act="test-rewrite">✨ Write a full test with AI</a></div>' : ''}
+    <div class="test-part"><h3>Part 1 · Multiple choice (${T.mcq.length})</h3>${mcqHTML}</div>
+    <div class="test-part"><h3>Part 2 · Free response (${frs.length})</h3>
+      <div class="small muted" style="margin:-4px 0 0">📝 Jot 3 bullets on paper first, then write each answer here.</div>
+      ${frs.map((_, p) => frHTML(nb, i, T, p)).join('')}</div>`;
 }
 ACT['test-rewrite'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); if (!L) return;
@@ -1894,27 +1925,32 @@ ACT['test-mcq'] = async (el) => {
   const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y);
   if (pick === q.answer) gainXP(3, 'section test');
 };
-document.addEventListener('input', (e) => { if (e.target.id === 'lessonP') { const key = `${route().id}:${route().arg}`; (UI.paraDraft ||= {})[key] = e.target.value; const w = e.target.parentElement.querySelector('.row .small.muted'); if (w) w.textContent = `${wordCount(e.target.value)} words`; } });
-ACT['test-para'] = async () => {
-  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T || T.para?.result) return;
-  const key = `${nb.id}:${i}`; const text = ($('#lessonP')?.value || '').trim();
-  if (wordCount(text) < 8) { toast('Write a few sentences first (at least 8 words).'); $('#lessonP')?.focus(); return; }
+document.addEventListener('input', (e) => {
+  const p = e.target.dataset?.fr; if (p === undefined) return;
+  (UI.paraDraft ||= {})[`${route().id}:${route().arg}:${p}`] = e.target.value;
+  const w = e.target.parentElement.querySelector('.fr-count'); if (w) w.textContent = `${wordCount(e.target.value)} words`;
+});
+ACT['test-para'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T) return;
+  const p = +el.dataset.p; const P = testFRs(T)[p]; const fa = testFRAnswers(T); if (!P || fa[p]?.result) return;
+  const key = `${nb.id}:${i}:${p}`; const text = (document.querySelector(`[data-fr="${p}"]`)?.value || '').trim();
+  if (wordCount(text) < 8) { toast('Write a few sentences first (at least 8 words).'); document.querySelector(`[data-fr="${p}"]`)?.focus(); return; }
   (UI.paraDraft ||= {})[key] = text; UI.paraGrading = key;
   const keep = () => { const y = window.scrollY; renderLesson(nb, $('#tab'), i); window.scrollTo(0, y); };
   keep();
   let r = null;
-  if (S.status.claude) { try { r = await ai('paragraph', { prompt: T.paragraph.prompt, key_points: T.paragraph.key_points, model: T.paragraph.model, response: text }); } catch (e) { aiError(e); } }
+  if (S.status.claude) { try { r = await ai('paragraph', { prompt: P.prompt, key_points: P.key_points, model: P.model, response: text }); } catch (e) { aiError(e); } }
   if (!r || typeof r.score !== 'number') {
-    const hits = (T.paragraph.key_points || []).filter((p) => coverage(text, p) >= 0.4);
-    const score = Math.round(100 * hits.length / Math.max(1, T.paragraph.key_points.length));
-    r = { score, verdict: score >= 80 ? 'correct' : score >= 40 ? 'partial' : 'incorrect', covered: hits, missing: T.paragraph.key_points.filter((p) => !hits.includes(p)), misconceptions: [], feedback: 'Checked by matching key points (the AI grader wasn’t available).' };
+    const hits = (P.key_points || []).filter((x) => coverage(text, x) >= 0.4);
+    const score = Math.round(100 * hits.length / Math.max(1, (P.key_points || []).length));
+    r = { score, verdict: score >= 80 ? 'correct' : score >= 40 ? 'partial' : 'incorrect', covered: hits, missing: (P.key_points || []).filter((x) => !hits.includes(x)), misconceptions: [], feedback: 'Checked by matching key points (the AI grader wasn’t available).' };
   }
   r.score = Math.max(0, Math.min(100, r.score));
-  T.para = { text, result: r }; UI.paraGrading = null; delete UI.paraDraft[key];
+  fa[p] = { text, result: r }; UI.paraGrading = null; delete UI.paraDraft[key];
   (nb.digest.cards[i].concept_ids || []).forEach((cid) => record(nb, cid, r.score / 100));
   await save(nb);
   if (route().tab === 'lessons' && +route().arg === i) keep();
-  const xp = Math.round(r.score / 10); if (xp) gainXP(xp, 'paragraph');
+  const xp = Math.round(r.score / 10); if (xp) gainXP(xp, 'free response');
 };
 
 // ── Teach it back: explaining in your own words (the Feynman technique) is one of the strongest ways to lock it in ──
@@ -2182,7 +2218,7 @@ ACT['lesson-retake'] = async (el) => {
   // remember the old test so the new one avoids it; reset the lesson to the start
   const old = (L.test?.mcq || []).map((q) => ({ q: q.question, a: q.answer }));
   L.pastTests = [...(L.pastTests || []), ...old].slice(-40);
-  if (L.test?.paragraph?.prompt) L.pastTests.push({ q: L.test.paragraph.prompt, a: '' });
+  for (const p of testFRs(L.test)) if (p?.prompt) L.pastTests.push({ q: p.prompt, a: '' });
   L.test = null; L.checks = {}; L.pos = 0; L.retaking = true;
   delete UI.cardRecall[`${nb.id}:${i}`]; UI.paperRecall = null;
   Object.keys(UI.lessonConf || {}).filter((k) => k.startsWith(`${nb.id}:${i}:`)).forEach((k) => delete UI.lessonConf[k]);
