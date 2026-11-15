@@ -1074,3 +1074,20 @@ html.modal-open { overflow: hidden; }
 .linklike { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; }
 .linklike:hover { text-decoration: underline; }
 @media (max-width: 640px) { .step-pic-img img { max-height: 64vh; } }
+
+.test-swap { display: block; margin: 6px 0 0 auto; font-size: 12.5px; color: var(--muted, #8a94a6); opacity: .8; }
+.test-swap:hover { opacity: 1; }
+
+.donate-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.fund-meter { margin-top: 8px; display: grid; gap: 4px; max-width: 360px; }
+.fund-meter .meter { height: 6px; }
+.fund-meter .meter.low i { background: var(--warn, #f5a524); }
+.fund-add input { flex: 1 1 140px; min-width: 0; }
+@media (max-width: 520px) { .donate-btns { width: 100%; } .donate-btns .btn { flex: 1; } }
+[data-donate-link][hidden] { display: none !important; }
+
+.lesson-box.how { background: color-mix(in srgb, #a78bfa 10%, var(--surface-2)); border-color: color-mix(in srgb, #a78bfa 35%, var(--border)); }
+.lesson-box.mix { background: color-mix(in srgb, #f5a524 9%, var(--surface-2)); border-color: color-mix(in srgb, #f5a524 35%, var(--border)); }
+.step-src { color: var(--muted, #8a94a6); }
+.step-src summary { cursor: pointer; width: fit-content; }
+.step-src blockquote { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--border); font-style: italic; }

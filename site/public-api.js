@@ -105,6 +105,10 @@
 
   function geminiError(status, j) {
     const msg = j?.error?.message || j?.error || '';
+    if (j?.error?.code === 'fund_empty' || /AI fund used up/.test(msg)) { // the shared fund ran out: no point trying other models
+      const e = new AIErr('The site’s shared AI fund is used up for now. Add your own free Gemini key in Settings to keep going (it takes a minute), or chip in to refill it 💜', 'no_key');
+      e.status = status; e.retry = false; return e;
+    }
     const e = geminiError0(status, msg); e.status = status; e.raw = String(msg);
     e.retry = status === 429 || status === 402 || /credits are depleted|prepayment/i.test(msg) || status >= 500 || status === 404 || (status === 403 && /not been used|disabled|not found|no longer|not available/i.test(msg));
     return e;
@@ -258,7 +262,8 @@
     transcribe: obj({ title: S, text: S }),
     lesson: obj({
       intro: S, prior: SA,
-      steps: arr(obj({ title: S, plain: S, explain: S, example: S, paper: S, terms: arr(obj({ term: S, meaning: S })),
+      steps: arr(obj({ title: S, plain: S, explain: S, how: S, example: S, mistake: S, page: N, quote: S, added: { type: 'boolean' },
+        paper: S, terms: arr(obj({ term: S, meaning: S })),
         check: obj({ type: { type: 'string', enum: ['mcq', 'short'] }, question: S, options: SA, answer: S, explanation: S, hint: S, concept_id: S }) })),
       summary: SA, mnemonic: S,
     }),
@@ -318,7 +323,20 @@ the squeeze"). Use comparisons to everyday things (doors, pumps, water balloons,
   plain: the whole step in ONE everyday sentence a 12-year-old gets, with no technical terms at all (≤18 words).
   explain: Markdown. Line 1: the core idea in ONE sentence (≤20 words). Then 2–3 bullets ("- "), each ≤14 words.
     **Bold** 1–2 key terms and define them the first time in plain words. ≤60 words in total.
-  example: one concrete example or analogy, ≤25 words, different from the section analogy.
+  how: "How it works": the SAME idea one level deeper, the way a good A&P or nursing textbook explains it: the real
+    mechanism as a cause → effect chain (A happens, so B, which causes C), with the correct technical terms, each
+    defined in a few plain words the first time. Markdown: 2–4 "- " bullets, ≤80 words. Never just repeat explain:
+    explain says WHAT, how says HOW and WHY. A beginner who read explain must be able to follow it.
+  example: one concrete example or analogy, ≤25 words, different from the section analogy. When the material allows,
+    make it a short real-life or patient example of the idea at work.
+  mistake: one common beginner mix-up about this idea and the truth, ≤30 words ("Many people think …, but …").
+    "" if there isn't a real, common one. Never invent a fact to correct.
+  page: the number in the [Page N] or [Slide N] marker of the material where this step's main idea is; 0 if the idea
+    isn't on any one page.
+  quote: up to 20 words copied EXACTLY, character for character, from that page, that back up this step. "" if page
+    is 0. Copy, never reword: the app checks it against the page.
+  added: true if this step (including how) teaches anything that is NOT in the material, i.e. textbook background you
+    added to explain a mechanism; otherwise false.
   paper: one small thing to do on paper, ≤18 words, starting with a verb. Alternate: odd steps = a quick sketch
     ("Sketch …, label …"), even steps = write it in their own words ("Cover the screen and write …").
   terms: 0–2 key terms, meanings ≤10 words. Skip terms already defined in explain.
@@ -332,10 +350,12 @@ the squeeze"). Use comparisons to everyday things (doors, pumps, water balloons,
     hint: a nudge for a second try that points them the right way WITHOUT giving the answer away (≤18 words), e.g.
     "Think about which side has more pressure when the ventricle relaxes."
 - summary: 3–4 takeaways, ≤12 words each. mnemonic: one memory hook, ≤15 words.
-Only teach what the material supports; where it's thin, keep it simple rather than inventing details. Never add
-general rules, numbers or cause-and-effect claims the material doesn't state. Describe tests and instruments (ECG,
+ACCURACY: base every step on the material, according to these slides. Where the material names a process but doesn't
+explain it, you MAY add well-established textbook background to explain the mechanism (and set added: true), but
+never numbers, normal values, doses, percentages or clinical rules the material doesn't state, and never anything that
+contradicts it. If you aren't sure a detail is true, leave it out: a shorter correct step beats a longer wrong one. Describe tests and instruments (ECG,
 blood pressure cuff, imaging) as measuring or recording, never as causing or controlling. Don't re-teach earlier
-sections or jump ahead to later ones. Never cite slide or page numbers anywhere.`,
+sections or jump ahead to later ones. Never put slide or page numbers in the text (only in the page field).`,
     section_test: `Write the end-of-section test for a student who just learned this section for the first time.
 THE GOLDEN RULE: test ONLY what THE LESSON taught. You are given the full lesson text; every question, every correct
 answer and every explanation must be answerable from that lesson text alone, by a student who read only the lesson.
@@ -393,7 +413,11 @@ sentence, never a JSON key), replace = the corrected text, why = ≤8 words. Fix
 2. sentences that are too hard for a beginner: long, jargon-stacked or undefined terms. Rewrite them in plain
    everyday words, keeping the meaning;
 3. "(Slide N)" / "(p. N)" citations and references to option numbers or letters ("Option one", "choice B"): remove them;
-4. a test question or option that is impossible or absurd. Keep fixes small. If everything is fine, return [].`,
+4. a test question or option that is impossible or absurd.
+Steps with "added": true may include standard textbook background that the material doesn't state: fix that only if it
+is wrong or misleading, not just because the slides don't say it. Check the "how" and "mistake" text as carefully as
+the rest. If a note lists steps whose quote wasn't found in the material, check every claim in those steps against
+the material with extra care. Keep fixes small. If everything is fine, return [].`,
     deep_dive: `A student finished the beginner lesson on ONE section of this lecture and wants to GO DEEPER. The beginner
 lesson felt too thin, so give real depth while staying easy to read.
 STYLE: plain words first, then the technical term; short sentences; no filler. Accuracy matters more than length.
@@ -422,6 +446,11 @@ the lesson text gives them what they need to answer it: the fact, term, structur
 correct answer, must be stated or clearly explained in the lesson text. Reasoning with taught ideas in a new situation
 (predict, apply, scenario) is fine if the idea itself was taught. A question is UNTAUGHT if answering it needs a fact,
 term, number, structure or detail the lesson text doesn't contain, even if it's true and on topic.
+Be strict. The thing the question is ABOUT (its subject, e.g. "gray nerve fibers", "the zona fasciculata") must be
+named or plainly described in the lesson text, and so must the correct answer; it is not enough that a related topic
+was covered. Some questions come with "[not in the lesson: …]": words from the question or answer that never appear in
+the lesson text. Treat that as strong evidence: unless those words are just everyday wording or a plain synonym of
+something the lesson does say, the question is UNTAUGHT.
 Return the numbers of the UNTAUGHT questions (empty if every question was taught).`,
     dedupe: `A student has already answered the ALREADY ASKED questions. For each CANDIDATE question, decide if it is a
 repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently or in plain
@@ -580,7 +609,8 @@ For each topic, write the YouTube search that will surface a great teaching vide
       return callJSON({ task: TASK.recall_check, parts: msg, schema: SCHEMA.recallCheck, thinking: 256, maxTokens: 1500, tier: 'lite' });
     },
     lesson_review(p) {
-      const msg = `Lesson JSON to check:\n${JSON.stringify(p.lesson).slice(0, 14000)}`;
+      const note = (p.unverified || []).length ? `Note: the quote in step${p.unverified.length > 1 ? 's' : ''} ${p.unverified.join(', ')} was NOT found in the material. Check those steps hardest.\n` : '';
+      const msg = `${note}Lesson JSON to check:\n${JSON.stringify(p.lesson).slice(0, 18000)}`;
       return callJSON({ sources: p.sources, task: TASK.lesson_review, parts: msg, schema: SCHEMA.review, thinking: 512, maxTokens: 4000, wait: 90000 });
     },
     deep_dive(p) {
@@ -601,7 +631,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
     },
     taught_check(p) {
       const msg = `LESSON TEXT:\n${p.lesson || ''}\n\nQUESTIONS:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
-      return callJSON({ task: TASK.taught_check, parts: msg, schema: SCHEMA.taught, thinking: 1024, maxTokens: 5000 });
+      return callJSON({ task: TASK.taught_check, parts: msg, schema: SCHEMA.taught, thinking: 2048, maxTokens: 6000 });
     },
     open_questions(p) {
       const msg = (p.items || []).map((x, i) => `${i + 1}. ${x.question}\nOptions: ${(x.options || []).join(' | ')}\nCorrect: ${x.answer}`).join('\n\n');

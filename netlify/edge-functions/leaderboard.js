@@ -52,15 +52,32 @@ async function allPlayers(store) {
   const rows = await Promise.all(blobs.map(async (b) => ({ h: b.key.slice(2), ...(await store.get(b.key, { type: 'json' })) })));
   return rows.filter((r) => r && r.name);
 }
-async function rollWeek(store, players, wk) { // close out finished weeks: keep the top 3 as champions
-  const meta = (await store.get('meta', { type: 'json' })) || { week: wk, champions: [] };
-  if (meta.week && meta.week !== wk) {
-    const xpFor = (p) => (p.weekKey === meta.week ? p.weekXp : p.lastWeek?.key === meta.week ? p.lastWeek.xp : 0);
-    const top = players.map((p) => ({ ...p, wxp: xpFor(p) })).filter((p) => p.wxp > 0).sort((a, b) => b.wxp - a.wxp).slice(0, 3)
-      .map((p) => ({ name: p.name, xp: p.wxp, h: p.h }));
-    if (top.length) meta.champions = [{ week: meta.week, top }, ...(meta.champions || [])].slice(0, 12);
-    meta.week = wk; await store.setJSON('meta', meta);
-  } else if (!meta.week) { meta.week = wk; await store.setJSON('meta', meta); }
+const addWeeks = (k, n) => new Date(Date.parse(k + 'T12:00:00Z') + n * 7 * 86400e3).toISOString().slice(0, 10);
+// a player's XP in week k: the current week, the one before it, or older weeks kept in hist
+const xpIn = (p, k) => num(p.weekKey === k ? p.weekXp : p.lastWeek?.key === k ? p.lastWeek.xp : p.hist?.[k]);
+function topFor(players, k) { // top 3 of week k; ties share a place (ties broken for order by all-time XP, then name)
+  const rows = players.map((p) => ({ name: p.name, xp: xpIn(p, k), h: p.h, total: p.total || 0 })).filter((p) => p.xp > 0)
+    .sort((a, b) => b.xp - a.xp || b.total - a.total || a.name.localeCompare(b.name)).slice(0, 3);
+  return rows.map((p) => ({ name: p.name, xp: p.xp, h: p.h, place: 1 + rows.filter((q) => q.xp > p.xp).length }));
+}
+async function rollWeek(store, players, wk) { // close out every finished week since the last rollover: keep the top 3 as champions
+  const stored = await store.get('meta', { type: 'json' });
+  const meta = { week: stored?.week || '', champions: Array.isArray(stored?.champions) ? stored.champions : [] };
+  const done = new Set(meta.champions.map((c) => c.week));
+  // first unfinished week: the stored one; with no meta yet, last week (every player's record still covers it)
+  let k = /^\d{4}-\d{2}-\d{2}$/.test(meta.week) ? meta.week : addWeeks(wk, -1);
+  if (k < addWeeks(wk, -8)) k = addWeeks(wk, -8);
+  let changed = !stored || meta.week < wk;
+  for (; k < wk; k = addWeeks(k, 1)) {
+    if (done.has(k)) continue; // already recorded (e.g. by a request racing this one)
+    const top = topFor(players, k);
+    if (top.length) { meta.champions.push({ week: k, top }); done.add(k); changed = true; }
+  }
+  if (changed) {
+    meta.champions = meta.champions.sort((a, b) => (a.week < b.week ? 1 : -1)).slice(0, 12);
+    if (meta.week < wk) meta.week = wk;
+    await store.setJSON('meta', meta);
+  }
   return meta;
 }
 
@@ -78,15 +95,16 @@ export default async (request) => {
     const meta = await rollWeek(store, players, wk);
     const id = request.headers.get('x-lb-id') || '';
     const me = /^[a-f0-9]{32}$/.test(id) ? await sha(id) : '';
-    const row = (p, xp) => ({ name: p.name, xp, total: p.total, me: p.h === me, champ: (meta.champions || []).some((c) => c.top[0]?.h === p.h) });
+    const place = (t, i) => t.place || i + 1; // older champion entries have no stored place
+    const row = (p, xp) => ({ name: p.name, xp, total: p.total, me: p.h === me, champ: (meta.champions || []).some((c) => c.top.some((t, i) => t.h === p.h && place(t, i) === 1)) });
     const weekly = players.filter((p) => p.weekKey === wk && p.weekXp > 0).sort((a, b) => b.weekXp - a.weekXp).map((p) => row(p, p.weekXp));
     const allTime = players.sort((a, b) => b.total - a.total).map((p) => row(p, p.total));
-    const myWins = me ? (meta.champions || []).flatMap((c) => c.top.map((t, i) => (t.h === me ? { week: c.week, place: i + 1 } : null)).filter(Boolean)) : [];
+    const myWins = me ? (meta.champions || []).flatMap((c) => c.top.map((t, i) => (t.h === me ? { week: c.week, place: place(t, i) } : null)).filter(Boolean)) : [];
     return json({
       week: wk, resetsAt: nextReset(now), players: players.length,
       weekly: weekly.slice(0, 50), allTime: allTime.slice(0, 50),
       me: me ? { joined: players.some((p) => p.h === me), weekPlace: weekly.findIndex((r) => r.me) + 1, allPlace: allTime.findIndex((r) => r.me) + 1, wins: myWins } : null,
-      champions: (meta.champions || []).map((c) => ({ week: c.week, top: c.top.map((t) => ({ name: t.name, xp: t.xp })) })),
+      champions: (meta.champions || []).map((c) => ({ week: c.week, top: c.top.map((t, i) => ({ name: t.name, xp: t.xp, place: place(t, i) })) })),
     });
   }
 
@@ -116,7 +134,13 @@ export default async (request) => {
       dayXp = usedToday + (gapDays === 0 ? delta : Math.min(delta, DAY_CAP));
       weekXp = prev.weekKey === wk ? prev.weekXp + delta : Math.min(delta, claimedWeek);
     }
-    const rec = { name: nm.name, total, weekKey: wk, weekXp, dayXp, updated: t, created: prev?.created || t,
+    // keep recent finished weeks so a rollover that happens late (no one opened the board) still ranks them correctly
+    let hist = prev?.hist || {};
+    if (prev && prev.weekKey && prev.weekKey !== wk) {
+      hist = { ...hist, ...(prev.lastWeek?.key ? { [prev.lastWeek.key]: num(prev.lastWeek.xp) } : {}), [prev.weekKey]: num(prev.weekXp) };
+      hist = Object.fromEntries(Object.entries(hist).filter(([k]) => k >= addWeeks(wk, -8) && k < wk));
+    }
+    const rec = { name: nm.name, total, weekKey: wk, weekXp, dayXp, updated: t, created: prev?.created || t, hist,
       lastWeek: prev && prev.weekKey !== wk ? { key: prev.weekKey, xp: prev.weekXp } : prev?.lastWeek };
     await store.setJSON(key, rec);
     return json({ ok: true, total, weekXp, clamped: total < num(body.total) });

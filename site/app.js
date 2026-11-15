@@ -772,8 +772,32 @@ if (LOOK.own?.kind === 'upload') loadOwn(); // so its preview is ready in Settin
 const DONATE_TO = ['kojace263', 'gmail.com'].join('@');
 function donateCard() {
   return `<div class="card donate"><span class="donate-ico">${icon('coffee')}</span>
-    <div class="spacer"><b>Help keep Etch free</b><div class="small muted">The AI costs real money to run. If Etch helps you study, please donate $1 on Zelle to <b class="donate-to">${DONATE_TO}</b>. <span style="white-space:nowrap">Thank you! – Ko</span></div></div>
-    <button class="btn sm" data-act="copy-donate">Copy email</button></div>`;
+    <div class="spacer"><b>Help keep Etch free</b><div class="small muted">The AI costs real money to run. If Etch helps you study, please donate $1 on Zelle to <b class="donate-to">${DONATE_TO}</b>. <span style="white-space:nowrap">Thank you! – Ko</span></div>
+      <div data-fund></div></div>
+    <div class="donate-btns"><button class="btn sm" data-act="copy-donate">Copy email</button><a class="btn sm primary" data-donate-link hidden target="_blank" rel="noopener">Donate by card</a></div></div>`;
+}
+// The shared AI fund: what's left of the money that pays for the site's AI (the owner's + donations).
+async function fundFetch(force) {
+  if (!S.status.public) return null;
+  if (!force && UI.fund && Date.now() - UI.fund.at < 60000) return UI.fund.data;
+  const r = await fetch('/edge/fund', { cache: 'no-store' }); if (!r.ok) throw new Error('fund ' + r.status);
+  const data = await r.json(); UI.fund = { at: Date.now(), data }; return data;
+}
+const money = (x) => `$${(+x || 0).toFixed(2)}`;
+function fundMeterHTML(d) {
+  if (!d?.enabled) return '';
+  if (!(d.total > 0)) return `<div class="fund-meter"><div class="row between small"><span>Shared AI fund: paused</span></div>
+    <div class="meter low"><i style="width:0%"></i></div></div>`;
+  const left = Math.max(0, Math.min(100, Math.round((100 * (+d.left || 0)) / d.total)));
+  return `<div class="fund-meter"><div class="row between small"><span>Shared AI fund</span><span><b>${money(d.left)}</b> left of ${money(d.total)}</span></div>
+    <div class="meter ${left < 20 ? 'low' : ''}"><i style="width:${left}%"></i></div></div>`;
+}
+function fillFund(force) {
+  if (!document.querySelector('[data-fund], [data-donate-link]')) return;
+  fundFetch(force).then((d) => {
+    document.querySelectorAll('[data-fund]').forEach((el) => { el.innerHTML = fundMeterHTML(d); });
+    document.querySelectorAll('[data-donate-link]').forEach((el) => { if (d?.donate) { el.href = d.donate; el.hidden = false; } });
+  }).catch(() => {});
 }
 ACT['copy-donate'] = async () => {
   try { await navigator.clipboard.writeText(DONATE_TO); toast('Email copied. Paste it in Zelle 💜'); }
@@ -1622,6 +1646,45 @@ function localLesson(nb, c) { // used when the AI isn't available: built from th
     summary: c.points, mnemonic: cons[0]?.mnemonic || '',
   };
 }
+// The lecture split into its pages/slides (from the [Page N] / [Slide N] markers), to check the quotes lessons cite.
+const PAGES = new Map();
+function sourcePages(nb) {
+  const sig = nb.sources.map((s) => `${s.id}:${s.text.length}`).join('|');
+  const hit = PAGES.get(nb.id); if (hit?.sig === sig) return hit.pages;
+  const pages = [];
+  for (const s of nb.sources) {
+    const parts = String(s.text || '').split(/\[(Page|Slide) (\d+)\]/);
+    if (parts.length < 3) { pages.push({ src: s.name, kind: '', n: 0, text: norm(s.text) }); continue; }
+    for (let k = 1; k + 2 <= parts.length; k += 3) pages.push({ src: s.name, kind: parts[k], n: +parts[k + 1], text: norm(parts[k + 2]) });
+  }
+  PAGES.set(nb.id, { sig, pages }); return pages;
+}
+function quoteFound(q, text) {
+  if (!q || !text) return false;
+  if (text.includes(q)) return true;
+  const w = q.split(' '); if (w.length < 4) return false;
+  let hits = 0; for (let k = 0; k + 3 <= w.length; k++) if (text.includes(w.slice(k, k + 3).join(' '))) hits++;
+  return hits / (w.length - 2) >= 0.6; // small differences (a dropped word, punctuation) still count
+}
+// Marks each step's source as checked (x.src) and returns the step numbers whose quote couldn't be found.
+function verifyStepSources(nb, d) {
+  const pages = sourcePages(nb); const bad = [];
+  (d?.steps || []).forEach((x, k) => {
+    const q = norm(x.quote); x.page = Math.max(0, Math.round(+x.page || 0)); x.added = !!x.added;
+    let at = null;
+    if (q.split(' ').length >= 3) at = pages.find((p) => p.n === x.page && quoteFound(q, p.text)) || pages.find((p) => quoteFound(q, p.text)) || null;
+    x.src = at ? { ok: true, n: at.n, kind: at.kind, name: at.src } : { ok: false };
+    if (!at && (q || !x.added)) bad.push(k + 1);
+  });
+  return bad;
+}
+function stepSrcHTML(x, many) {
+  if (x.src?.ok) {
+    const where = x.src.n ? `${x.src.kind === 'Slide' ? 'slide' : 'page'} ${x.src.n}` : 'your notes';
+    return `<details class="step-src small"><summary>📄 From ${where}${many && x.src.name ? ` of ${esc(x.src.name)}` : ''}${x.added ? ' · plus some textbook background' : ''}</summary><blockquote>“${esc(x.quote)}”</blockquote></details>`;
+  }
+  return x.added ? '<div class="step-src small muted">📚 Includes textbook background beyond your slides</div>' : '';
+}
 function cleanLesson(d) { // make sure every multiple-choice check really has its answer among the options
   for (const s of d.steps || []) {
     const ch = s.check; if (!ch?.question) { s.check = null; continue; }
@@ -1647,7 +1710,7 @@ function tidyText(s, bullets = false) {
   return x.trim();
 }
 function tidyDeep(o, key = '') {
-  if (typeof o === 'string') return tidyText(o, key === 'explain');
+  if (typeof o === 'string') return tidyText(o, key === 'explain' || key === 'how');
   if (Array.isArray(o)) return o.map((v) => tidyDeep(v, key));
   if (o && typeof o === 'object') { for (const k of Object.keys(o)) o[k] = tidyDeep(o[k], k); return o; }
   return o;
@@ -1680,8 +1743,8 @@ function fixCauseClaims(o) {
   };
   walk(o);
 }
-async function factCheck(nb, obj) {
-  try { const r = await ai('lesson_review', { sources: aiSources(nb), lesson: obj }); return applyFixes(obj, r.fixes); }
+async function factCheck(nb, obj, extra = {}) {
+  try { const r = await ai('lesson_review', { sources: aiSources(nb), lesson: obj, ...extra }); return applyFixes(obj, r.fixes); }
   catch { return 0; }
 }
 
@@ -1702,8 +1765,11 @@ async function buildLesson(nb, i, { force = false, keep = null } = {}) {
       tidyDeep(data);
       UI.lessonPhase = 'check';
       if (location.hash.endsWith(`/lessons/${i}`)) { const p = document.querySelector('.lesson-phase'); if (p) p.textContent = 'Double-checking the facts and making it simpler…'; }
-      await factCheck(nb, data);
-      fixCauseClaims(data); tidyDeep(data); data = cleanLesson(data);
+      // each step cites a page and copies a short quote from it: check the quote really is there (no AI needed),
+      // and point the fact-check at the steps whose quote wasn't found
+      const unverified = verifyStepSources(nb, data);
+      await factCheck(nb, data, { unverified });
+      fixCauseClaims(data); tidyDeep(data); data = cleanLesson(data); verifyStepSources(nb, data);
     } catch (e) {
       data = null;
       if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the lesson with AI (${e.message}). Showing a simpler one from your study cards.`, 'err');
@@ -1956,7 +2022,10 @@ function lessonStageHTML(nb, i, L, s, steps) {
       ${x.plain ? `<div class="lesson-plain"><span>🗣️ In plain words</span>${esc(x.plain)}</div>` : ''}
       <div class="lesson-text">${md(x.explain)}</div>
       ${stepPicHTML(nb, i, L, s.j)}
+      ${x.how ? `<div class="lesson-box how"><b>⚙️ How it works</b><div>${md(x.how)}</div></div>` : ''}
       ${x.example ? `<div class="lesson-box ex"><b>💡 Example</b><div>${md(x.example)}</div></div>` : ''}
+      ${x.mistake ? `<div class="lesson-box mix"><b>⚠️ Common mix-up</b><div>${md(x.mistake)}</div></div>` : ''}
+      ${stepSrcHTML(x, nb.sources.length > 1)}
       <div class="paper-task"><span class="paper-ico">✍️</span><div>${esc(paperPrompt(x, s.j))}</div></div>
       ${x.terms?.length ? `<dl class="lesson-terms">${x.terms.map((t) => `<div><dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd></div>`).join('')}</dl>` : ''}
       ${help.map((h) => `<div class="lesson-box help"><b>${lab[h.mode] || '💬'}${h.q ? `: “${esc(h.q)}”` : ''}</b>${h.guess ? `<div class="small muted">Your guess: “${esc(h.guess)}”</div>` : ''}<div>${md(h.a)}</div></div>`).join('')}
@@ -2090,9 +2159,32 @@ function lessonText(d) {
   const clean = (x) => String(x || '').replace(/\*\*|__|`/g, '').trim();
   return [d.intro && `Intro: ${clean(d.intro)}`, ...(d.prior || []).map((x) => `Refresher: ${clean(x)}`),
     ...d.steps.map((x, k) => [`Step ${k + 1}: ${clean(x.title)}`, x.plain && `In plain words: ${clean(x.plain)}`, clean(x.explain),
-      x.example && `Example: ${clean(x.example)}`, ...(x.terms || []).map((tm) => `Term: ${clean(tm.term)} = ${clean(tm.meaning)}`),
+      x.how && `How it works: ${clean(x.how)}`, x.example && `Example: ${clean(x.example)}`, x.mistake && `Common mix-up: ${clean(x.mistake)}`, ...(x.terms || []).map((tm) => `Term: ${clean(tm.term)} = ${clean(tm.meaning)}`),
       x.check?.question && `Quick check: ${clean(x.check.question)} Answer: ${clean(x.check.answer)}. ${clean(x.check.explanation)}`].filter(Boolean).join('\n')),
     (d.summary || []).length && `Summary: ${d.summary.map(clean).join(' ')}`, d.mnemonic && `Memory trick: ${clean(d.mnemonic)}`].filter(Boolean).join('\n\n');
+}
+const PLAIN = new Set('about above after again against also always among another answer any because before being below best better between both cause causes change changes common correct describe described does done down during each either every example false following function functions happen happens help helps however important increase increases decrease decreases instead itself just keep known large least less like likely main make makes many mean means more most much must need needs never normal often only other part parts patient person play plays primary process produce produced provide provides rather reason result role same should show shows since small some something statement still such take that their them there these thing things those through true type types under used uses using usually very what when where whether which while within without would'.split(' '));
+const LATIN_PL = { atria: 'atrium', nuclei: 'nucleus', ganglia: 'ganglion', vertebrae: 'vertebra', bronchi: 'bronchus', alveoli: 'alveolus', foramina: 'foramen', cilia: 'cilium', mitochondria: 'mitochondrion', lumina: 'lumen' };
+// singular and plural must land on the same stem: muscle/muscles → "muscl", process/processes → "proces", atria/atrium → "atrium"
+function stemW(w) { return (LATIN_PL[w] || w).replace(/(ies|ied)$/, 'y').replace(/(ing|ed|es|s|ly)$/, '').replace(/e$/, '').replace(/ss$/, 's').slice(0, 7); }
+function lessonWords(text) { return new Set(norm(text).split(' ').filter((w) => w.length > 2).map(stemW)); }
+function notInLesson(text, words) {
+  const out = []; for (const w of norm(text).split(' ')) { if (w.length < 4 || STOP.has(w) || PLAIN.has(w) || /^\d+$/.test(w)) continue; if (!words.has(stemW(w)) && !out.includes(w)) out.push(w); }
+  return out.slice(0, 8);
+}
+// one line per question for the "was it taught?" check, with the words the lesson never uses
+// hint words come from the answer plus long (likely technical) stem words, so everyday scenario wording isn't flagged
+function mcqHint(q) { return `${q.answer} ${norm(q.question).split(' ').filter((w) => w.length >= 7).join(' ')}`; }
+// free response: the prompt and its key points (the model answer is the AI's own wording, not something the student must know)
+function frHint(p) { return `${p.prompt} ${(p.key_points || []).join(' ')}`; }
+function taughtLine(q, words, hint) { const s = `${q.question} (answer: ${q.answer})`; const miss = notInLesson(hint ?? mcqHint(q), words); return miss.length ? `${s} [not in the lesson: ${miss.join(', ')}]` : s; }
+function frLine(p, words) { return taughtLine({ question: p.prompt, answer: p.model || '' }, words, frHint(p)); }
+// 0-based indexes the checker called untaught. If it flagged >70% of a batch (3+), it's being unreliable: then only drop
+// flagged items whose hint has 3+ words the lesson never uses
+function untaughtSet(res, hints, words) {
+  const n = hints.length; const bad = new Set((res?.untaught || []).map((k) => k - 1).filter((k) => k >= 0 && k < n));
+  if (n >= 3 && bad.size > 0.7 * n) for (const k of [...bad]) if (notInLesson(hints[k], words).length < 3) bad.delete(k);
+  return bad;
 }
 async function buildTest(nb, i) {
   const L = lessonOf(nb, i); const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
@@ -2122,53 +2214,73 @@ async function buildTest(nb, i) {
       // same meaning in different words (vs. what was already asked, and inside this test): ask the AI
       let aiRepeat = new Set();
       const allTaught = [taught, ...earlier.filter((e) => e.lesson).map((e) => `Earlier section “${e.title}”:\n${e.lesson}`)].join('\n\n');
-      const [dd, tc] = await Promise.allSettled([
+      const words = lessonWords(allTaught);
+      const frsAll = (r.paragraphs || []).filter((p) => p?.prompt);
+      const [dd, tc, tf] = await Promise.allSettled([
         ai('dedupe', { asked: used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) }),
-        taught ? ai('taught_check', { lesson: allTaught, candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) }) : Promise.reject(new Error('no lesson')),
+        taught ? ai('taught_check', { lesson: allTaught, candidates: all.map((q) => taughtLine(q, words)) }) : Promise.reject(new Error('no lesson')),
+        taught && frsAll.length ? ai('taught_check', { lesson: allTaught, candidates: frsAll.map((p) => frLine(p, words)) }) : Promise.reject(new Error('no lesson')),
       ]);
       if (dd.status === 'fulfilled') aiRepeat = new Set((dd.value.repeats || []).map((n) => n - 1));
-      // a question the lesson never taught is dropped like a repeat (and never used to top up)
-      if (tc.status === 'fulfilled') { const un = (tc.value.untaught || []).map((n) => n - 1).filter((n) => n >= 0 && n < all.length); if (all.length - un.length >= 3) un.forEach((n) => aiRepeat.add(n)); }
+      // a question the lesson never taught is dropped like a repeat (and never used to top up); the top-up below refills
+      if (tc.status === 'fulfilled') untaughtSet(tc.value, all.map(mcqHint), words).forEach((n) => aiRepeat.add(n));
+      const frBad = tf.status === 'fulfilled' ? untaughtSet(tf.value, frsAll.map(frHint), words) : new Set();
+      let frs = frsAll.filter((_, n) => !frBad.has(n));
       const picked = [];
       all.forEach((q, n) => { if (!aiRepeat.has(n) && !used.some((u) => same(q, u)) && !picked.some((p) => same(q, { q: p.question, a: p.answer }))) picked.push(q); });
       const review = picked.filter((q) => q.review).slice(0, 2);
-      let mcq = [...picked.filter((q) => !q.review).slice(0, TEST_MCQ - review.length), ...review];
+      let mcq = [...picked.filter((q) => !q.review).slice(0, TEST_MCQ - review.length), ...review]; const spare = [];
       if (mcq.length < TEST_MCQ) { // top up only with questions that don't share wording or an answer with anything already in the test
         all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n)) return; if (!mcq.includes(q) && !mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); }); // never re-add a flagged repeat: fewer questions beats a repeat
       }
       // second, independent repeat check on the final picks (the AI judge isn't perfectly consistent, so two passes catch more)
+      let dropped = new Set();
       try {
         const d2 = await ai('dedupe', { asked: used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: mcq.map((q) => `${q.question} (answer: ${q.answer})`) });
         const drop = new Set((d2.repeats || []).map((n) => n - 1));
         if (drop.size) {
-          const dropped = new Set(mcq.filter((_, n) => drop.has(n)));
+          dropped = new Set(mcq.filter((_, n) => drop.has(n)));
           mcq = mcq.filter((_, n) => !drop.has(n));
           all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n) || dropped.has(q) || mcq.includes(q)) return; if (!mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); });
         }
       } catch { /* keep the first pass */ }
       // short lesson: after dropping repeats and untaught questions there may be fewer than 10, so ask once more
-      if (mcq.length < TEST_MCQ) {
+      for (let round = 0; round < 2 && (mcq.length < TEST_MCQ || frs.length < TEST_FR); round++) {
         try {
           const fmt = (q) => `${q.question} (answer: ${q.answer})`;
           const r2 = await ai('section_test', { ...req, earlier: [], seen: [...req.seen, ...mcq.map((q) => q.question.slice(0, 160))] });
+          if (frs.length < TEST_FR && taught) {
+            const more = (r2.paragraphs || []).filter((p) => p?.prompt && !frs.some((f) => coverage(f.prompt, p.prompt) > 0.5));
+            if (more.length) { try { const tm = await ai('taught_check', { lesson: allTaught, candidates: more.map((p) => frLine(p, words)) }); const b = untaughtSet(tm, more.map(frHint), words); frs.push(...more.filter((_, n) => !b.has(n))); } catch { /* keep what we have */ } }
+          }
+          if (mcq.length >= TEST_MCQ) continue;
           const cands = (r2.mcq || []).map(shuffleOpts).filter(Boolean).filter((q) => !q.concept_id || !allIds.has(q.concept_id) || known.has(q.concept_id))
             .filter((q) => !used.some((u) => same(q, u)) && !mcq.some((p) => same(q, { q: p.question, a: p.answer })));
           if (cands.length) {
             const [d3, t3] = await Promise.allSettled([
               ai('dedupe', { asked: [...used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), ...mcq.map(fmt)], candidates: cands.map(fmt) }),
-              taught ? ai('taught_check', { lesson: allTaught, candidates: cands.map(fmt) }) : Promise.reject(new Error('no lesson')),
+              taught ? ai('taught_check', { lesson: allTaught, candidates: cands.map((q) => taughtLine(q, words)) }) : Promise.reject(new Error('no lesson')),
             ]);
-            const bad = new Set([...(d3.status === 'fulfilled' ? d3.value.repeats || [] : []), ...(t3.status === 'fulfilled' ? t3.value.untaught || [] : [])].map((n) => n - 1));
-            cands.forEach((q, n) => { if (mcq.length < TEST_MCQ && !bad.has(n) && !mcq.some((p) => same(q, { q: p.question, a: p.answer }))) mcq.push(q); });
+            const bad = new Set([...(d3.status === 'fulfilled' ? (d3.value.repeats || []).map((n) => n - 1) : []), ...(t3.status === 'fulfilled' ? untaughtSet(t3.value, cands.map(mcqHint), words) : [])]);
+            cands.forEach((q, n) => { if (bad.has(n) || mcq.some((p) => same(q, { q: p.question, a: p.answer }))) return; if (mcq.length < TEST_MCQ) mcq.push(q); else if (!spare.some((p) => same(q, { q: p.question, a: p.answer }))) spare.push(q); });
           }
         } catch { /* keep what we have */ }
       }
+      let lt = null; const local = () => (lt ||= localTest(nb, i, L));
+      // too few survived: keep the vetted ones and fill from the lesson's own checks instead of throwing them all away
+      if (mcq.length < 3) for (const q of local().mcq) { if (mcq.length >= 3) break; if (!mcq.some((p) => same(q, { q: p.question, a: p.answer }))) mcq.push(q); }
       mcq.sort((x, y) => (x.review ? 1 : 0) - (y.review ? 1 : 0)); // review questions last
-      const frs = (r.paragraphs || []).filter((p) => p?.prompt).slice(0, TEST_FR);
-      if (mcq.length < 3 || !frs.length) throw new Error('The test came back incomplete. Try again.');
-      t = tidyDeep({ mcq, paragraphs: frs });
+      if (!frs.length) frs = frsAll.slice(0, 1); // every paragraph question was flagged: one is better than none
+      if (!frs.length) frs = local().paragraphs; // none came back at all: a test with no free response could never be finished
+      frs = frs.slice(0, TEST_FR);
+      if (mcq.length < 3) throw new Error('The test came back incomplete. Try again.');
+      // checked, unused questions: "Not in my lesson? Swap it" takes the next one (only if both first checks ran: otherwise `all` is unvetted)
+      if (tc.status === 'fulfilled' && dd.status === 'fulfilled') all.forEach((q, n) => { if (!aiRepeat.has(n) && !dropped.has(q) && !mcq.includes(q) &&!used.some((u) => same(q, u)) && !mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !spare.some((p) => same(q, { q: p.question, a: p.answer }))) spare.push(q); });
+      t = tidyDeep({ mcq, paragraphs: frs, spare: spare.slice(0, 6), v: 2 });
       CAUSE_RX.lastIndex = 0;
-      if (CAUSE_RX.test(textOf(t)) || OPTION_RX.test(textOf(t))) { const before = JSON.parse(JSON.stringify(t)); await factCheck(nb, t); fixCauseClaims(t); t.mcq = t.mcq.map(shuffleOpts).filter(Boolean); if (t.mcq.length < 3) { t = before; fixCauseClaims(t); } }
+      // with a lesson, skip the slide fact-check: the lesson was already checked, and checking the test against the slides would pull untaught facts back in
+      if (!taught && (CAUSE_RX.test(textOf(t)) || OPTION_RX.test(textOf(t)))) { const before = JSON.parse(JSON.stringify(t)); await factCheck(nb, t); fixCauseClaims(t); t.mcq = t.mcq.map(shuffleOpts).filter(Boolean); if (t.mcq.length < 3) { t = before; fixCauseClaims(t); } }
+      if (taught) fixCauseClaims(t);
       CAUSE_RX.lastIndex = 0;
     } catch (e) { if (e.code === 'no_key') aiError(e); else toast(`Couldn’t write the section test with AI (${e.message}). Using a shorter one.`, 'err'); }
   }
@@ -2199,7 +2311,9 @@ function frHTML(nb, i, T, p) {
   return `<div class="test-q"><div class="test-qh"><span class="test-n">${String.fromCharCode(65 + p)}</span><b>${esc(P.prompt)}</b></div>${body}</div>`;
 }
 function testStageHTML(nb, i, L) {
-  const key = `${nb.id}:${i}`; const T = L.test;
+  const key = `${nb.id}:${i}`;
+  if (L.test && !L.test.v && !L.test.fallback && !Object.keys(L.test.answers || {}).length && !Object.keys(testFRAnswers(L.test) || {}).length) delete L.test;
+  const T = L.test;
   if (!T) {
     if (!UI.testBusy?.[key]) buildTest(nb, i).then(() => { if (onLesson(nb, i)) lessonShow(nb, i); });
     return `<div class="lesson-kicker">Section test</div><h2>Writing your test…</h2><div class="spinner lg" style="margin:10px auto"></div>
@@ -2213,7 +2327,8 @@ function testStageHTML(nb, i, L) {
         const cls = a !== undefined ? (o === q.answer ? 'right' : a === o ? 'wrong' : 'dim') : '';
         return `<button class="opt ${cls}" data-act="test-mcq" data-q="${k}" data-o="${n}" ${a !== undefined ? 'disabled' : ''}><span class="opt-l">${'ABCD'[n] || n + 1}</span><span>${esc(o)}</span></button>`;
       }).join('')}</div>
-      ${a !== undefined && q.explanation ? `<div class="small test-exp ${a === q.answer ? 'ok' : 'no'}">${a === q.answer ? '✓' : '✗'} ${esc(q.explanation)}</div>` : ''}</div>`;
+      ${a !== undefined && q.explanation ? `<div class="small test-exp ${a === q.answer ? 'ok' : 'no'}">${a === q.answer ? '✓' : '✗'} ${esc(q.explanation)}</div>` : ''}
+      ${a === undefined ? `<button class="linklike small muted test-swap" data-act="test-swap" data-q="${k}">Not in my lesson? ${T.spare?.length ? 'Swap it' : 'Remove it'}</button>` : ''}</div>`;
   }).join('');
   return `<div class="lesson-kicker">Section test</div><h2>Show what you learned</h2>
     <p class="muted" style="margin:0">No peeking at your notes. Multiple choice: ${sc.answered}/${sc.total} answered${sc.answered ? ` · ${sc.right} right` : ''}. Free response: ${sc.frDone}/${sc.frTotal} done.</p>
@@ -2227,6 +2342,23 @@ ACT['test-rewrite'] = async () => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); if (!L) return;
   if (!(await aiReady())) { toast('Writing tests needs the AI tutor. See Settings.', 'err'); return openSettings(); }
   delete L.test; lessonShow(nb, i);
+};
+ACT['test-swap'] = async (el) => {
+  const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T) return;
+  const k = +el.dataset.q; if (T.answers[k] !== undefined || !T.mcq[k]) return;
+  if (UI.testSwapBusy) return; // a double-click would swap/remove twice
+  UI.testSwapBusy = true;
+  try {
+    const old = T.mcq[k]; const next = (T.spare || []).shift();
+    if (next) { T.mcq[k] = next; toast('Swapped for another question from your lesson.'); }
+    else {
+      if (T.mcq.length <= 3) return toast('This test needs at least 3 questions. Use Retake for a fresh test.', 'err');
+      T.mcq.splice(k, 1); const ans = {}; Object.entries(T.answers).forEach(([n, v]) => { ans[+n > k ? +n - 1 : n] = v; }); T.answers = ans;
+      toast('Removed. It won’t count toward your score.');
+    }
+    L.pastTests = [...(L.pastTests || []), { q: old.question, a: old.answer }].slice(-40); // never ask it again
+    await save(nb); lessonShow(nb, i);
+  } finally { UI.testSwapBusy = false; }
 };
 ACT['test-mcq'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const L = lessonOf(nb, i); const T = L?.test; if (!T) return;
@@ -3605,6 +3737,7 @@ function lbSync(now = false) {
     lbPost().then((j) => {
       if (j?.throttled) { clearTimeout(lbTimer); lbTimer = setTimeout(() => lbSync(true), Math.min(20000, (j.retryIn || 15000) + 500)); return; }
       if (route().view === 'leaderboard') lbFetch(true).then(drawLeaderboard).catch(() => {});
+      else if (!(Date.now() < UI.lbWinCheck)) lbFetch().catch(() => {}); // first sync of the session / after a reset: pick up any win
     }).catch((e) => { if (now && !UI.lbWarned) { UI.lbWarned = true; toast(`Leaderboard didn’t update: ${e.message}`, 'err'); } });
   }, now ? 300 : 4000);
 }
@@ -3613,10 +3746,14 @@ async function lbFetch(force) {
   const r = await fetch('/edge/lb', { headers: S.meta.lbId ? { 'x-lb-id': S.meta.lbId } : {}, cache: 'no-store' });
   if (!r.ok) throw new Error('leaderboard ' + r.status);
   const data = await r.json(); UI.lb = { at: Date.now(), data };
-  const wins = data.me?.wins || []; const old = S.meta.lbWins || [];
-  if (JSON.stringify(wins) !== JSON.stringify(old)) {
-    const fresh = wins.filter((w) => !old.some((x) => x.week === w.week));
-    S.meta.lbWins = wins; await saveMeta(); fresh.forEach((w) => celebrateWin(w));
+  UI.lbWinCheck = Date.parse(data.resetsAt) + 60e3; // look for new wins again once this week is over
+  // prizes are kept forever: add new wins, never drop old ones (the server's Hall only keeps the last 12 weeks)
+  const old = S.meta.lbWins || [];
+  const fresh = (data.me?.wins || []).filter((w) => w && w.week && !old.some((x) => x.week === w.week));
+  if (fresh.length) {
+    S.meta.lbWins = [...old, ...fresh].sort((a, b) => (a.week < b.week ? 1 : -1)); await saveMeta();
+    fresh.forEach((w) => celebrateWin(w)); renderTop();
+    if (route().view === 'profile') render();
   }
   return data;
 }
@@ -3649,7 +3786,11 @@ function drawLeaderboard(d) {
   const box = $('#lbBox'); if (!box || !d) return;
   const tab = UI.lbTab || 'week'; const rows = tab === 'week' ? d.weekly : d.allTime;
   const place = d.me?.joined ? (tab === 'week' ? d.me.weekPlace : d.me.allPlace) : 0;
-  box.innerHTML = `
+  box.innerHTML = `${route().admin ? `<section class="card stack fund-admin"><h2>💜 AI fund (owner)</h2><div data-fund></div>
+    <p class="small muted" style="margin:0">Add each donation here so the site’s AI keeps running. When the fund is used up, visitors are asked to add their own free key.</p>
+    <div class="row fund-add"><input type="number" id="fundAdd" min="0" step="0.01" placeholder="Amount ($)"><input type="text" id="fundNote" maxlength="80" placeholder="Note (e.g. Zelle from Sam)"><button class="btn primary" data-act="fund-add">Add to fund</button></div>
+    <div class="row"><button class="btn sm" data-act="fund-set">Set the total…</button><button class="btn sm ghost" data-act="fund-reset">Reset spent to $0</button></div>
+    <div class="small muted" id="fundLog"></div></section>` : ''}
   <section class="card lb-head stack">
     <div class="row between"><h1 style="margin:0">🏆 Leaderboard</h1><span class="small muted">${d.players} player${d.players === 1 ? '' : 's'}</span></div>
     <div class="seg lb-tabs">${[['week', 'This week'], ['all', 'All time']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" data-act="lb-tab" data-v="${k}">${l}</button>`).join('')}</div>
@@ -3662,12 +3803,14 @@ function drawLeaderboard(d) {
   <section class="card lb-list">${lbRows(rows, tab === 'week' ? 'No one has scored this week yet. Study a little and you’re #1!' : 'No one has joined yet. Be the first!')}</section>
   ${place > 50 ? `<p class="small muted" style="text-align:center">You’re #${place}. Keep going!</p>` : ''}
   ${d.champions.length ? `<section class="card stack"><h2>🏛️ Hall of Champions</h2>${d.champions.map((c) => `<div class="hall-row"><span class="small muted">Week of ${fmtWeek(c.week)}</span>
-    <div>${c.top.map((x, i) => `<span class="hall-pl">${MEDAL[i]} ${esc(x.name)} <span class="muted small">${x.xp.toLocaleString()} XP</span></span>`).join('')}</div></div>`).join('')}</section>` : ''}
+    <div>${c.top.map((x, i) => `<span class="hall-pl">${MEDAL[(x.place || i + 1) - 1]} ${esc(x.name)} <span class="muted small">${x.xp.toLocaleString()} XP</span></span>`).join('')}</div></div>`).join('')}</section>` : ''}
   ${S.meta.lbJoined ? `<p class="small muted" style="text-align:center">You’re on the board as <b>${esc(prof().name)}</b> · <a href="#" data-act="lb-leave">Leave the leaderboard</a></p>` : ''}`;
+  if (route().admin) fillFund(true);
   clearInterval(UI.lbTick);
   UI.lbTick = setInterval(() => { const c = $('#lbCountdown'); if (!c) return clearInterval(UI.lbTick); c.textContent = fmtUntil(d.resetsAt); }, 30000);
 }
 function homeLbCard() {
+  fillFund();
   const host = $('#homeLb'); if (!host) return;
   lbFetch().then((d) => {
     const h = $('#homeLb'); if (!h) return;
@@ -3693,6 +3836,29 @@ ACT['lb-admin-del'] = async (el) => {
     const j = await r.json().catch(() => ({})); if (!r.ok || !j.removed) { UI.lbAdminKey = ''; throw new Error(j.error || 'Not removed (wrong key?)'); }
     toast(`Removed “${name}”`); UI.lb = null; renderLeaderboard();
   } catch (e) { toast(e.message, 'err'); }
+};
+async function fundAdmin(body) {
+  const k = UI.lbAdminKey || prompt('Admin key (FUND_ADMIN_KEY or LB_ADMIN_KEY from Netlify):') || ''; if (!k) return null; UI.lbAdminKey = k;
+  try {
+    const r = await fetch('/edge/fund', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-key': k }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) { UI.lbAdminKey = ''; throw new Error(j.error || `Didn’t save (${r.status})`); }
+    UI.fund = null; fillFund(true);
+    const log = $('#fundLog'); if (log && j.log) log.innerHTML = j.log.slice().reverse().map((x) => esc(`${new Date(x.when).toLocaleDateString()} · ${x.add ? `+${money(x.add)}${x.note ? ` (${x.note})` : ''}` : x.total !== undefined ? `total set to ${money(x.total)}` : `spent reset (was ${money(x.reset)})`}`)).join('<br>');
+    return j;
+  } catch (e) { toast(e.message, 'err'); return null; }
+}
+ACT['fund-add'] = async () => {
+  const v = parseFloat($('#fundAdd')?.value || ''); if (!(v > 0)) return toast('Type an amount first');
+  const j = await fundAdmin({ add: v, note: $('#fundNote')?.value || '' });
+  if (j) { toast(`Added ${money(v)} · ${money(j.left)} left`); $('#fundAdd').value = ''; $('#fundNote').value = ''; }
+};
+ACT['fund-set'] = async () => {
+  const v = parseFloat(prompt('Total money in the AI fund, in dollars (e.g. 15). 0 pauses the site’s AI key:') || ''); if (!(v >= 0)) return;
+  const j = await fundAdmin({ total: v }); if (j) toast(`Fund total is now ${money(j.total)}`);
+};
+ACT['fund-reset'] = async () => {
+  if (!confirm('Set the amount spent back to $0? Do this only when you top up Google with fresh money.')) return;
+  const j = await fundAdmin({ resetSpent: true }); if (j) toast('Spent reset to $0');
 };
 ACT['lb-home-tab'] = (el) => { UI.lbHomeTab = el.dataset.v; homeLbCard(); };
 ACT['lb-tab'] = (el) => { UI.lbTab = el.dataset.v; drawLeaderboard(UI.lb?.data); };
@@ -4011,13 +4177,14 @@ function openSettings() {
   modal(`<h2>Settings</h2><div class="stack">
     <div class="card flat tight"><b>AI tutor: Google Gemini</b><div class="small" style="margin-top:4px">${st.ownKey
       ? '<span class="tag good">✓ your key</span> Using your own free Gemini key. It’s saved only in this browser and is only passed on to Google.'
-      : st.sharedKey ? '<span class="tag good">✓ on</span> Using this site’s free shared allowance. If it ever runs out for the day, you can add your own free key below.'
+      : st.sharedKey ? '<span class="tag good">✓ on</span> Using this site’s shared AI fund, paid for by the creator and donations. If it runs out, add your own free key below and keep going.'
       : '<span class="tag bad">off</span> Add a free Gemini key below to turn on the AI tutor.'}</div></div>
     <label class="field"><span>Your Gemini API key (optional)</span><input type="password" id="kGemini" placeholder="${st.ownKey ? '•••••••• saved (leave blank to keep)' : 'Paste your key'}" autocomplete="off"></label>
     <div class="small muted">Get one free in about a minute at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.${st.ownKey ? ' <a href="#" data-act="forget-key">Remove my key</a>' : ''}</div>
     <div class="field"><span>Gemini model</span><select id="kModel"><option value="auto">Automatic (Lite for quick tasks, Flash for kits &amp; exams)</option>${st.model ? `<option value="${esc(st.model)}" selected>${esc(st.model)}</option>` : ''}</select></div>
-    <div class="small muted">On Gemini’s free tier Google may use what you send to improve its products, so don’t upload anything private.</div>
+    <div class="small muted">Don’t upload anything private or any patient details. On a free Gemini key Google may use what you send to improve its products.</div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="save-settings">Save</button></div>
+    ${st.public && !st.ownKey ? donateCard() : ''}
     <hr style="border:0;border-top:1px solid var(--border)">
     ${lookSection()}
     <hr style="border:0;border-top:1px solid var(--border)">
@@ -4027,6 +4194,7 @@ function openSettings() {
     <div class="row"><button class="btn" data-act="export">⬇️ Export backup</button><label class="btn" style="position:relative">⬆️ Import backup<input type="file" id="importIn" accept=".json" class="file-hidden"></label></div>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="close-modal">Close</button></div></div>`);
   $('#importIn')?.addEventListener('change', importData);
+  fillFund(true);
   if (st.claude) {
     api('/api/models', null, 'GET').then((r) => {
       const sel = $('#kModel'); if (!sel) return;
