@@ -2084,18 +2084,32 @@ function seenQuestions(nb, skip) {
   }
   return out;
 }
+// Everything a lesson actually put in front of the student, as plain text (what the section test may ask about).
+function lessonText(d) {
+  if (!d?.steps?.length) return '';
+  const clean = (x) => String(x || '').replace(/\*\*|__|`/g, '').trim();
+  return [d.intro && `Intro: ${clean(d.intro)}`, ...(d.prior || []).map((x) => `Refresher: ${clean(x)}`),
+    ...d.steps.map((x, k) => [`Step ${k + 1}: ${clean(x.title)}`, x.plain && `In plain words: ${clean(x.plain)}`, clean(x.explain),
+      x.example && `Example: ${clean(x.example)}`, ...(x.terms || []).map((tm) => `Term: ${clean(tm.term)} = ${clean(tm.meaning)}`),
+      x.check?.question && `Quick check: ${clean(x.check.question)} Answer: ${clean(x.check.answer)}. ${clean(x.check.explanation)}`].filter(Boolean).join('\n')),
+    (d.summary || []).length && `Summary: ${d.summary.map(clean).join(' ')}`, d.mnemonic && `Memory trick: ${clean(d.mnemonic)}`].filter(Boolean).join('\n\n');
+}
 async function buildTest(nb, i) {
   const L = lessonOf(nb, i); const c = nb.digest.cards[i]; const key = `${nb.id}:${i}`;
   (UI.testBusy ||= {})[key] = true;
   let t = null;
   if (await aiReady()) {
     try {
-      const r = await ai('section_test', { sources: aiSources(nb), title: c.title, points: c.points,
+      const taught = lessonText(L.data);
+      const earlierCards = nb.digest.cards.slice(0, i).map((x, k) => ({ x, k })).sort(() => Math.random() - 0.5).slice(0, 3);
+      const earlier = earlierCards.map(({ x, k }) => ({ title: x.title, points: x.points, lesson: lessonText(lessonOf(nb, k)?.data).slice(0, 2500) }));
+      const req = { sources: aiSources(nb), title: c.title, points: c.points, lesson: taught,
         steps: (L.data.steps || []).map((s) => `${s.title}: ${String(s.explain || '').slice(0, 220)}`),
         used: (L.data.steps || []).map((s) => s.check?.question).filter(Boolean),
         seen: seenQuestions(nb, i).slice(-40).map((x) => x.q.slice(0, 160)),
         concepts: nb.digest.concepts.map((x) => ({ id: x.id, name: x.name })),
-        earlier: nb.digest.cards.slice(0, i).sort(() => Math.random() - 0.5).slice(0, 3).map((x) => ({ title: x.title, points: x.points })) });
+        earlier };
+      const r = await ai('section_test', req);
       const ownChecks = (L.data.steps || []).map((s) => s.check).filter((ch) => ch?.question).map((ch) => ({ q: ch.question, a: ch.answer }));
       const used = [...seenQuestions(nb, i).slice(-(40 - ownChecks.length)), ...ownChecks]; // keep this section's own checks in every comparison
       // only this section and earlier ones: drop questions about concepts that are first taught in a later section
@@ -2107,10 +2121,14 @@ async function buildTest(nb, i) {
       const same = (q, u) => { const qq = Math.min(coverage(q.question, u.q), coverage(u.q, q.question)); const aa = u.a ? Math.min(coverage(q.answer, u.a), coverage(u.a, q.answer)) : 0; return qq >= 0.6 || (aa >= 0.7 && qq >= 0.35) || (!!u.a && norm(q.answer) === norm(u.a)); };
       // same meaning in different words (vs. what was already asked, and inside this test): ask the AI
       let aiRepeat = new Set();
-      try {
-        const d = await ai('dedupe', { asked: used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) });
-        aiRepeat = new Set((d.repeats || []).map((n) => n - 1));
-      } catch { /* word-overlap check below still runs */ }
+      const allTaught = [taught, ...earlier.filter((e) => e.lesson).map((e) => `Earlier section “${e.title}”:\n${e.lesson}`)].join('\n\n');
+      const [dd, tc] = await Promise.allSettled([
+        ai('dedupe', { asked: used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) }),
+        taught ? ai('taught_check', { lesson: allTaught, candidates: all.map((q) => `${q.question} (answer: ${q.answer})`) }) : Promise.reject(new Error('no lesson')),
+      ]);
+      if (dd.status === 'fulfilled') aiRepeat = new Set((dd.value.repeats || []).map((n) => n - 1));
+      // a question the lesson never taught is dropped like a repeat (and never used to top up)
+      if (tc.status === 'fulfilled') { const un = (tc.value.untaught || []).map((n) => n - 1).filter((n) => n >= 0 && n < all.length); if (all.length - un.length >= 3) un.forEach((n) => aiRepeat.add(n)); }
       const picked = [];
       all.forEach((q, n) => { if (!aiRepeat.has(n) && !used.some((u) => same(q, u)) && !picked.some((p) => same(q, { q: p.question, a: p.answer }))) picked.push(q); });
       const review = picked.filter((q) => q.review).slice(0, 2);
@@ -2128,6 +2146,23 @@ async function buildTest(nb, i) {
           all.forEach((q, n) => { if (mcq.length >= TEST_MCQ || aiRepeat.has(n) || dropped.has(q) || mcq.includes(q)) return; if (!mcq.some((p) => same(q, { q: p.question, a: p.answer })) && !used.some((u) => same(q, u))) mcq.push(q); });
         }
       } catch { /* keep the first pass */ }
+      // short lesson: after dropping repeats and untaught questions there may be fewer than 10, so ask once more
+      if (mcq.length < TEST_MCQ) {
+        try {
+          const fmt = (q) => `${q.question} (answer: ${q.answer})`;
+          const r2 = await ai('section_test', { ...req, earlier: [], seen: [...req.seen, ...mcq.map((q) => q.question.slice(0, 160))] });
+          const cands = (r2.mcq || []).map(shuffleOpts).filter(Boolean).filter((q) => !q.concept_id || !allIds.has(q.concept_id) || known.has(q.concept_id))
+            .filter((q) => !used.some((u) => same(q, u)) && !mcq.some((p) => same(q, { q: p.question, a: p.answer })));
+          if (cands.length) {
+            const [d3, t3] = await Promise.allSettled([
+              ai('dedupe', { asked: [...used.map((u) => (u.a ? `${u.q} (answer: ${u.a})` : u.q)), ...mcq.map(fmt)], candidates: cands.map(fmt) }),
+              taught ? ai('taught_check', { lesson: allTaught, candidates: cands.map(fmt) }) : Promise.reject(new Error('no lesson')),
+            ]);
+            const bad = new Set([...(d3.status === 'fulfilled' ? d3.value.repeats || [] : []), ...(t3.status === 'fulfilled' ? t3.value.untaught || [] : [])].map((n) => n - 1));
+            cands.forEach((q, n) => { if (mcq.length < TEST_MCQ && !bad.has(n) && !mcq.some((p) => same(q, { q: p.question, a: p.answer }))) mcq.push(q); });
+          }
+        } catch { /* keep what we have */ }
+      }
       mcq.sort((x, y) => (x.review ? 1 : 0) - (y.review ? 1 : 0)); // review questions last
       const frs = (r.paragraphs || []).filter((p) => p?.prompt).slice(0, TEST_FR);
       if (mcq.length < 3 || !frs.length) throw new Error('The test came back incomplete. Try again.');

@@ -268,6 +268,7 @@
     review: obj({ fixes: arr(obj({ find: S, replace: S, why: S })) }),
     openQs: obj({ items: arr(obj({ question: S, answer: S })) }),
     dedupe: obj({ repeats: { type: 'array', items: N } }),
+    taught: obj({ untaught: { type: 'array', items: N } }),
     deep: obj({
       overview: S,
       layers: arr(obj({ title: S, plain: S, explain: S, beyond: { type: 'boolean' } })),
@@ -336,6 +337,14 @@ general rules, numbers or cause-and-effect claims the material doesn't state. De
 blood pressure cuff, imaging) as measuring or recording, never as causing or controlling. Don't re-teach earlier
 sections or jump ahead to later ones. Never cite slide or page numbers anywhere.`,
     section_test: `Write the end-of-section test for a student who just learned this section for the first time.
+THE GOLDEN RULE: test ONLY what THE LESSON taught. You are given the full lesson text; every question, every correct
+answer and every explanation must be answerable from that lesson text alone, by a student who read only the lesson.
+Never test a fact, term, number, structure, example or detail that isn't in the lesson text, even if it is true and
+on the lecture's topic. Distractors may be other things the lesson mentioned or plain common confusions.
+If the lesson is short, test the SAME taught ideas from different angles (why, predict, scenario, compare, order,
+apply to a new example) instead of reaching for untaught facts.
+Write questions about the ideas themselves: never say "the lesson", "the lesson text" or "the provided text" in a
+question, and don't ask what the memory trick or example was; test the idea it stands for.
 - mcq: 16 CANDIDATE questions (the app keeps the best 10 after removing repeats). Each has exactly 4 options in random
   order; answer = the exact text of the correct option; options ≤14 words; plausible distractors from common
   confusions; never three options of the same kind so the odd one out is obviously right; no absurd options.
@@ -357,7 +366,8 @@ sections or jump ahead to later ones. Never cite slide or page numbers anywhere.
   2) apply it: a short patient or real-life scenario to reason through, or connect it to another section.
   key_points: the 3–5 points a strong answer includes. model: a model answer of ≤80 words in plain language.
   Neither prompt may repeat a quick-check or mcq question.
-Use plain, simple wording. Only test what the lessons taught; don't add rules or numbers the material doesn't state.
+Use plain, simple wording. Only test what the lesson text taught; don't add rules, terms or numbers it doesn't state.
+Review questions follow the same rule using the earlier sections' lesson text.
 Never cite slide or page numbers anywhere.`,
     paragraph: `Grade a student's paragraph answer to an end-of-section question. Judge meaning, not wording; accept
 synonyms and minor misspellings. score 0–100 for how many key points are covered correctly and clearly, minus for
@@ -407,6 +417,12 @@ lecture material. Never contradict the material. Don't cite slide or page number
   short: options = [], answer = the essential chain in ≤40 words. explanation ≤35 words (name the tempting wrong
   option by its wording, never "option B"). concept_id from the given ids. Never repeat the already-asked questions.
 - connections: 2–4 one-line links to other sections of this lecture or other body systems.`,
+    taught_check: `A student has read ONLY the LESSON TEXT below (nothing else). For each numbered QUESTION, decide whether
+the lesson text gives them what they need to answer it: the fact, term, structure, number or idea it tests, and the
+correct answer, must be stated or clearly explained in the lesson text. Reasoning with taught ideas in a new situation
+(predict, apply, scenario) is fine if the idea itself was taught. A question is UNTAUGHT if answering it needs a fact,
+term, number, structure or detail the lesson text doesn't contain, even if it's true and on topic.
+Return the numbers of the UNTAUGHT questions (empty if every question was taught).`,
     dedupe: `A student has already answered the ALREADY ASKED questions. For each CANDIDATE question, decide if it is a
 repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently or in plain
 everyday words (e.g. "Why don't valves need muscles?" = "Why do valves work passively?"; "What happens to the blood in
@@ -538,16 +554,17 @@ For each topic, write the YouTube search that will surface a great teaching vide
       return callJSON({ sources: p.sources, task: TASK.lesson, parts: msg, schema: SCHEMA.lesson, thinking: 1024, maxTokens: 12000, wait: 120000 });
     },
     section_test(p) {
-      const msg = [`Section: ${p.title || ''}`, 'Key points:', ...(p.points || []).map((x) => `- ${x}`),
-        (p.steps || []).length ? 'What the lesson taught, step by step:' : '', ...(p.steps || []).map((x) => `- ${x}`),
+      const msg = [`Section: ${p.title || ''}`,
+        p.lesson ? `THE LESSON TEXT (the only thing you may test):\n${p.lesson}` : ['Key points:', ...(p.points || []).map((x) => `- ${x}`)].join('\n'),
+        !p.lesson && (p.steps || []).length ? 'What the lesson taught, step by step:' : '', ...(p.lesson ? [] : (p.steps || []).map((x) => `- ${x}`)),
         (p.used || []).length ? 'Quick-check questions already asked (don\'t repeat):' : '', ...(p.used || []).map((x) => `- ${x}`),
         (p.concepts || []).length ? 'Concept ids:' : '', ...(p.concepts || []).map((c) => `- ${c.id}: ${c.name}`),
         (p.seen || []).length ? 'Questions this student has ALREADY been asked in this notebook (never repeat or reword these; test different facts or angles):' : '',
         ...(p.seen || []).map((x) => `- ${x}`),
         (p.earlier || []).length ? 'Earlier sections (for the review questions):' : 'No earlier sections.',
-        ...(p.earlier || []).map((e) => `- ${e.title}: ${(e.points || []).join('; ')}`),
+        ...(p.earlier || []).map((e) => (e.lesson ? `- ${e.title}, lesson text:\n${e.lesson}` : `- ${e.title}: ${(e.points || []).join('; ')}`)),
         'Write the section test now.'].filter(Boolean).join('\n');
-      return callJSON({ sources: p.sources, task: TASK.section_test, parts: msg, schema: SCHEMA.sectionTest, thinking: 512, maxTokens: 16000, wait: 150000 });
+      return callJSON({ sources: p.lesson ? null : p.sources, task: TASK.section_test, parts: msg, schema: SCHEMA.sectionTest, thinking: 512, maxTokens: 16000, wait: 150000 });
     },
     async paragraph(p) {
       const msg = `Question: ${p.prompt || ''}\nKey points a strong answer includes:\n${(p.key_points || []).map((x) => `- ${x}`).join('\n')}\nModel answer: ${p.model || ''}\nStudent's paragraph:\n${fence(p.response)}`;
@@ -581,6 +598,10 @@ For each topic, write the YouTube search that will surface a great teaching vide
     dedupe(p) {
       const msg = `ALREADY ASKED:\n${(p.asked || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\nCANDIDATES:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
       return callJSON({ task: TASK.dedupe, parts: msg, schema: SCHEMA.dedupe, thinking: 512, maxTokens: 4000 }); // room for thinking + the short list
+    },
+    taught_check(p) {
+      const msg = `LESSON TEXT:\n${p.lesson || ''}\n\nQUESTIONS:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
+      return callJSON({ task: TASK.taught_check, parts: msg, schema: SCHEMA.taught, thinking: 1024, maxTokens: 5000 });
     },
     open_questions(p) {
       const msg = (p.items || []).map((x, i) => `${i + 1}. ${x.question}\nOptions: ${(x.options || []).join(' | ')}\nCorrect: ${x.answer}`).join('\n\n');
