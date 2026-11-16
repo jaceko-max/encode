@@ -42,6 +42,23 @@ function limited(request, max = 40, windowMs = 60000, bucket = '') {
   if (HITS.size > 5000) for (const [k, v] of HITS) if (now - v.t > windowMs) HITS.delete(k);
   return h.n > max;
 }
+// constant-time string compare for admin keys
+function sameKey(a, b) {
+  a = String(a || ''); b = String(b || ''); if (!a || !b) return false;
+  let d = a.length ^ b.length; for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+// AI requests on the site key that are running right now, per visitor (one person can't open dozens at once)
+const INFLIGHT = new Map(); const MAX_INFLIGHT = 8;
+const visitor = (request, context) => context?.ip || request.headers.get('x-nf-client-connection-ip') || 'anon';
+// Worst-case token estimate for a request, before Google says what it really cost. Pictures ≈ 1,100 tokens each,
+// a video link ≈ 300k (a ~20-minute lecture), text ≈ 4 characters per token.
+function estimateIn(b) {
+  let chars = 0; let tokens = 0;
+  const walk = (parts) => { for (const pt of parts || []) { if (pt?.text) chars += String(pt.text).length; else if (pt?.inlineData) tokens += 1100; else if (pt?.fileData) tokens += 300000; } };
+  walk(b.systemInstruction?.parts); for (const c of b.contents || []) walk(c?.parts);
+  return Math.ceil(chars / 4) + tokens;
+}
 const SITE_MODELS = /^gemini-[\d.]+-flash(-lite)?(-image[\w.-]*)?$/; // what the app uses on the site's key (no Pro)
 
 // ── The AI fund ──────────────────────────────────────────────────────────────────────────────
@@ -64,7 +81,7 @@ function costOf(model, u) {
   return (Math.max(0, prompt - cached) * p.in + cached * p.in * 0.1 + out * p.out) / 1e6;
 }
 // total: null = no cap set; 0 = paused; otherwise dollars in the fund
-const FUND = { state: null, at: 0, pending: 0, flushing: null };
+const FUND = { state: null, at: 0, pending: 0, flushing: null, reserved: 0 }; // reserved = worst-case cost of requests still running here
 const fundStore = () => getStore({ name: 'fund', consistency: 'strong' });
 const envTotal = () => { const v = (Netlify.env.get('AI_FUND_USD') || '').trim(); const n = parseFloat(v); return v !== '' && Number.isFinite(n) && n >= 0 ? n : null; };
 function fundShape(st) {
@@ -106,7 +123,8 @@ function fundCharge(usd) {
   })();
   return FUND.flushing;
 }
-const fundOpen = (st) => st.total === null || st.spent < st.total * 0.98; // stop a hair early; 0 = paused
+// open only if what's spent + what's still running + this request's worst case fits in the fund (stop a hair early; 0 = paused)
+const fundOpen = (st, extra = 0) => st.total === null || st.spent + FUND.pending + FUND.reserved + extra < st.total * 0.98;
 const donateUrl = () => { const u = Netlify.env.get('DONATE_URL') || ''; return /^https:\/\/[^\s"'<>]+$/i.test(u) ? u : ''; };
 const fundPublic = (st) => ({ enabled: st.total !== null, total: r2(st.total || 0), spent: r2(st.spent), left: r2(Math.max(0, (st.total || 0) - st.spent)) });
 // The last "usageMetadata" in Gemini's stream has the final token counts. Only the end of each line is kept
@@ -138,7 +156,7 @@ export default async (request, context) => {
     if (request.method === 'POST') {
       if (limited(request, 6, 60000, 'fund:')) return json({ error: 'Too many tries. Wait a minute.' }, 429);
       const admin = Netlify.env.get('FUND_ADMIN_KEY') || Netlify.env.get('LB_ADMIN_KEY');
-      if (!admin || request.headers.get('x-admin-key') !== admin) return json({ error: 'Wrong admin key.' }, 403);
+      if (!admin || !sameKey(request.headers.get('x-admin-key'), admin)) return json({ error: 'Wrong admin key.' }, 403);
       const b = await request.json().catch(() => ({}));
       const amt = (v) => (Number.isFinite(+v) && +v >= 0 && +v <= 100000 ? Math.round(+v * 100) / 100 : null);
       let st;
@@ -232,33 +250,50 @@ export default async (request, context) => {
     if (+(request.headers.get('content-length') || 0) > MAX_BODY) return json({ error: { message: 'Request too large' } }, 413);
     let body = await request.arrayBuffer();
     if (body.byteLength > MAX_BODY) return json({ error: { message: 'Request too large' } }, 413);
-    const usingSiteKey = !request.headers.get('x-user-key');
+    const usingSiteKey = !request.headers.get('x-user-key'); let estIn = 0; let reserve = 0; let who = '';
     if (usingSiteKey) {
       // the site's key pays for this request: keep it to what the app itself sends
       if (!SITE_MODELS.test(model)) return json({ error: { message: 'That model isn’t available on this site.' } }, 404); // 404 = the app moves on to the next model
       if (limited(request, 90)) return json({ error: { message: 'Too many AI requests at once. Wait a minute and try again.' } }, 429);
-      if (!fundOpen(await fundState())) return json({ error: { message: 'AI fund used up', code: 'fund_empty' } }, 402);
       let b; try { b = JSON.parse(new TextDecoder().decode(body)); } catch { return json({ error: { message: 'Bad request' } }, 400); }
+      if (!b || typeof b !== 'object' || Array.isArray(b)) return json({ error: { message: 'Bad request' } }, 400);
       delete b.tools; delete b.toolConfig; delete b.cachedContent;
-      const g = (b.generationConfig ||= {});
-      if (!(g.maxOutputTokens > 0) || g.maxOutputTokens > 65536) g.maxOutputTokens = Math.min(65536, Math.max(1, g.maxOutputTokens || 8192));
-      if (g.thinkingConfig && g.thinkingConfig.thinkingBudget > 4096) g.thinkingConfig.thinkingBudget = 4096;
+      const g = (b.generationConfig && typeof b.generationConfig === 'object' ? b.generationConfig : (b.generationConfig = {}));
+      if (!(g.maxOutputTokens > 0) || g.maxOutputTokens > 65536) g.maxOutputTokens = Math.min(65536, Math.max(1, +g.maxOutputTokens || 8192));
+      if (g.thinkingConfig && typeof g.thinkingConfig === 'object') {
+        delete g.thinkingConfig.thinkingLevel; // only a token budget, capped
+        const tb = +g.thinkingConfig.thinkingBudget;
+        if (!Number.isFinite(tb) || tb < 0 || tb > 4096) g.thinkingConfig.thinkingBudget = 4096;
+      }
       if (g.candidateCount) g.candidateCount = 1;
       body = new TextEncoder().encode(JSON.stringify(b));
+      // reserve the worst case before calling Google, so many requests at once can't overshoot the fund
+      estIn = estimateIn(b);
+      reserve = costOf(model, { promptTokenCount: estIn, candidatesTokenCount: g.maxOutputTokens + (+g.thinkingConfig?.thinkingBudget || 0) });
+      who = visitor(request, context);
+      // the app can run a few calls side by side; past that, wait for a free slot (up to 20 s) instead of failing
+      for (let waited = 0; (INFLIGHT.get(who) || 0) >= MAX_INFLIGHT; waited += 250) {
+        if (waited >= 20000 || request.signal?.aborted) return json({ error: { message: 'Too many AI requests at once. Wait a moment and try again.' } }, 429);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (!fundOpen(await fundState(), reserve)) return json({ error: { message: 'AI fund used up', code: 'fund_empty' } }, 402);
+      INFLIGHT.set(who, (INFLIGHT.get(who) || 0) + 1); FUND.reserved += reserve; // no await between the check and the reservation
     }
 
     // Start answering right away (edge functions must respond within 40 s) and keep the line alive
     // while Gemini thinks, then pipe Gemini's own event stream through.
     const { readable, writable } = new TransformStream();
-    const w = writable.getWriter(); const enc = new TextEncoder(); let usage = null; let started = false;
+    const w = writable.getWriter(); const enc = new TextEncoder(); let usage = null; let started = false; let sent = false; let answered = false; let outBytes = 0;
     const job = (async () => {
       const ping = setInterval(() => { w.write(enc.encode(': ping\n\n')).catch(() => {}); }, 8000);
       try {
         await w.write(enc.encode(': start\n\n'));
+        sent = true;
         const r = await fetch(`${GOOGLE}/models/${model}:streamGenerateContent?alt=sse`, {
           method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body,
           signal: request.signal, // the student left or the app gave up: stop generating (and paying)
         });
+        answered = true;
         if (!r.ok) {
           clearInterval(ping);
           const text = await r.text();
@@ -270,6 +305,7 @@ export default async (request, context) => {
           for (;;) {
             const { value, done } = await reader.read(); if (done) break;
             if (first) { clearInterval(ping); first = false; }
+            outBytes += value.length;
             if (usingSiteKey) {
               const parts = dec.decode(value, { stream: true }).split('\n');
               parts.forEach((part, n) => { lineEnd = (lineEnd + part).slice(-16384); if (n < parts.length - 1) { usage = usageFrom(lineEnd) || usage; lineEnd = ''; } });
@@ -282,10 +318,15 @@ export default async (request, context) => {
         await w.write(enc.encode(`event: error\ndata: ${JSON.stringify({ status: 502, body: JSON.stringify({ error: { message: String(e?.message || e) } }) })}\n\n`)).catch(() => {});
       } finally {
         clearInterval(ping);
-        if (usingSiteKey && started) { // counted before the stream closes (and waitUntil keeps it running if the student left)
-          // no token counts (the student left mid-answer): charge a rough guess for the input that was sent
-          const usd = usage ? costOf(model, usage) : costOf(model, { promptTokenCount: Math.min(body.byteLength / 4, 40000) });
-          await fundCharge(usd).catch(() => {});
+        if (usingSiteKey) {
+          FUND.reserved = Math.max(0, FUND.reserved - reserve);
+          const n = (INFLIGHT.get(who) || 1) - 1; if (n > 0) INFLIGHT.set(who, n); else INFLIGHT.delete(who);
+          // counted before the stream closes (and waitUntil keeps it running if the student left).
+          // No final token counts (left mid-answer, or before Google replied): charge the input estimate plus what streamed out.
+          if (started || (sent && !answered)) {
+            const usd = usage ? costOf(model, usage) : costOf(model, { promptTokenCount: estIn, candidatesTokenCount: Math.ceil(outBytes / 4) });
+            await fundCharge(usd).catch(() => {});
+          }
         }
         await w.close().catch(() => {});
       }

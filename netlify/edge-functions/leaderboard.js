@@ -15,6 +15,12 @@ const DAY_CAP = 1500;          // most XP a real study day plausibly earns
 const FIRST_JOIN_CAP = 15000;  // most XP accepted the first time someone joins
 const MIN_GAP_MS = 15000;      // ignore updates more often than this
 
+// constant-time string compare for the admin key
+function sameKey(a, b) {
+  a = String(a || ''); b = String(b || ''); if (!a || !b) return false;
+  let d = a.length ^ b.length; for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const nyDate = (d) => d.toLocaleDateString('en-CA', { timeZone: TZ });
 function weekKey(now = new Date()) { // the Sunday that starts this week, as YYYY-MM-DD (New York time)
@@ -154,7 +160,7 @@ export default async (request) => {
 
   if (request.method === 'DELETE') {
     const admin = Netlify.env.get('LB_ADMIN_KEY');
-    if (body.name && admin && request.headers.get('x-admin-key') === admin) {
+    if (body.name && admin && sameKey(request.headers.get('x-admin-key'), admin)) {
       const target = String(body.name).trim().toLowerCase();
       const players = await allPlayers(store); let removed = 0;
       const gone = [];

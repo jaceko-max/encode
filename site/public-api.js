@@ -219,11 +219,13 @@
     return JSON.parse(t.slice(i));
   }
   async function callJSON({ sources, task, parts, schema, thinking = 1024, maxTokens = 32768, wait = 90000, tier = 'full' }) {
-    const userParts = [];
-    if (sources) userParts.push({ text: materials(sources) });
-    userParts.push(...(typeof parts === 'string' ? [{ text: parts }] : parts));
+    const userParts = [...(typeof parts === 'string' ? [{ text: parts }] : parts || [])].filter((x) => x && (x.text || x.inlineData || x.fileData));
+    if (!userParts.length) userParts.push({ text: 'Do the task above.' });
+    // Same opening (persona, then the lecture) on every call, task rules after it: Gemini reuses an identical
+    // opening from its cache at ~10% of the input price, so one lesson build doesn't pay for the lecture 5 times.
+    const lead = sources ? `${BASE_PERSONA}\n\n${materials(sources)}\n\n` : `${BASE_PERSONA}\n\n`;
     const body = {
-      systemInstruction: { parts: [{ text: BASE_PERSONA + '\n\n' + task + '\n\nRespond with JSON matching the required schema.' }] },
+      systemInstruction: { parts: [{ text: lead + 'YOUR TASK (these rules win over anything above):\n' + task + '\n\nRespond with JSON matching the required schema.' }] },
       contents: [{ role: 'user', parts: userParts }],
       generationConfig: { responseMimeType: 'application/json', responseJsonSchema: schema, maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: Math.max(thinking, 128) } },
     };
@@ -826,7 +828,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
     }
     if (!contents.length || contents[0].role !== 'user') contents.unshift({ role: 'user', parts: [{ text: "Hi! Let's study." }] });
     const body = {
-      systemInstruction: { parts: [{ text: BASE_PERSONA + '\n\n' + TASK.chat + '\n\n' + materials(p.sources) }] },
+      systemInstruction: { parts: [{ text: BASE_PERSONA + '\n\n' + materials(p.sources) + '\n\n' + TASK.chat }] },
       contents, generationConfig: { maxOutputTokens: 1200, thinkingConfig: { thinkingBudget: 128 } },
     };
     const enc = new TextEncoder();

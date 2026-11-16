@@ -11,8 +11,12 @@ const DAY = 86400000;
 const dayKey = (d = new Date()) => d.toLocaleDateString('en-CA');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pct = (x) => Math.round((x || 0) * 100);
+const vcls = (v) => (['correct', 'partial', 'incorrect', 'skip', 'developing', 'mastered', 'needs', 'solid'].includes(v) ? v : ''); // verdict -> css class (never raw data)
+const num = (x) => (Number.isFinite(+x) ? Math.round(+x) : 0);
+const MD_PURIFY = { ALLOW_DATA_ATTR: false, FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed', 'svg', 'math'], FORBID_ATTR: ['style', 'id', 'name', 'class'] };
 function md(text) {
-  try { return DOMPurify.sanitize(marked.parse(String(text || ''), { breaks: true })); }
+  // AI text: keep formatting, but no buttons/forms/styles or data-* attributes (those could trigger app actions)
+  try { return DOMPurify.sanitize(marked.parse(String(text || ''), { breaks: true }), MD_PURIFY); }
   catch { return esc(text).replace(/\n/g, '<br>'); }
 }
 const STOP = new Set('the a an and or of to in on for with is are was were be by as at it its that this from into than then which who what when how why your you their they them our not but can will has have had do does did'.split(' '));
@@ -474,7 +478,8 @@ async function api(path, body, method = 'POST') {
   if (!r.ok || j.error) { const e = new Error(j.error || `HTTP ${r.status}`); e.code = j.code; throw e; }
   return j;
 }
-const ai = (task, body) => api(`/api/ai/${task}`, body);
+let AI_RUNNING = 0; // AI calls in flight (the tab-refocus reload waits until none are running)
+const ai = async (task, body) => { AI_RUNNING++; try { return await api(`/api/ai/${task}`, body); } finally { AI_RUNNING--; } };
 // No key / shared fund empty: open Settings only the first time this session, then one short toast, then just
 // the banner. Graders check aiOn() and fall back to self-grading / key-point matching instead of retrying.
 function aiError(e) {
@@ -537,7 +542,7 @@ document.addEventListener('keydown', (e) => {
 
 // ───────────────────────── routing ─────────────────────────
 function route() {
-  const p = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+  const p = location.hash.replace(/^#\/?/, '').split('/').map((x) => { try { return decodeURIComponent(x); } catch { return ''; } });
   if (p[0] === 'nb' && p[1]) return { view: 'nb', id: p[1], tab: p[2] || '', arg: p[3] || '' };
   if (p[0] === 'course' && p[1]) return { view: 'course', course: p[1] };
   if (p[0] === 'profile') return { view: 'profile' };
@@ -1145,7 +1150,7 @@ function renderNotebook(nb, tab, arg) {
     <div class="tabs-sentinel" aria-hidden="true"></div>
     <div class="tabs-bar">
       <div class="stage-row" role="tablist" aria-label="Study stage">${STAGES.map((sg, n) => { const on = stageOf(tab).k === sg.k; const target = sg.k === 'learn' && !sg.tabs.includes(next.tab) ? 'lessons' : sg.tabs.includes(next.tab) ? next.tab : sg.home;
-        return `<a href="#/nb/${nb.id}/${on ? tab : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${icon(sg.ico)}${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
+        return `<a href="#/nb/${nb.id}/${on ? (['deep', 'checkin'].includes(tab) ? `${tab}/${encodeURIComponent(arg ?? '')}` : tab) : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${icon(sg.ico)}${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
       <nav class="tabs">${TABS.filter(([k]) => stageOf(tab).tabs.includes(k)).sort((x, y) => stageOf(tab).tabs.indexOf(x[0]) - stageOf(tab).tabs.indexOf(y[0])).map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
     <div id="tab"></div>`;
   const tabsEl = $('.tabs');
@@ -1215,7 +1220,7 @@ function renderSources(nb, el) {
 
     ${nb.sources.length ? `<div class="card flat" style="padding:0">${nb.sources.map((s) => `
       <div class="src"><span class="ic">${KIND_ICON[s.kind] || '📄'}</span>
-        <div style="flex:1;min-width:0"><div class="nm">${esc(s.name)}</div><div class="small muted">${s.kind} · ${s.text.length.toLocaleString()} chars${s.images ? ` · 🖼️ ${s.images} picture${s.images === 1 ? '' : 's'}` : ['pdf', 'pptx'].includes(s.kind) && s.images === undefined ? ' · <span style="color:var(--warn)">no pictures yet: drop this file again to add them</span>' : ''}</div>
+        <div style="flex:1;min-width:0"><div class="nm">${esc(s.name)}</div><div class="small muted">${esc(s.kind)} · ${String(s.text || '').length.toLocaleString()} chars${s.images ? ` · 🖼️ ${num(s.images)} picture${s.images === 1 ? '' : 's'}` : ['pdf', 'pptx'].includes(s.kind) && s.images === undefined ? ' · <span style="color:var(--warn)">no pictures yet: drop this file again to add them</span>' : ''}</div>
         ${UI.preview === s.id ? `<pre>${esc(s.text.slice(0, 6000))}${s.text.length > 6000 ? '\n…' : ''}</pre>` : ''}</div>
         <button class="btn sm ghost" data-act="preview-src" data-id="${s.id}">${UI.preview === s.id ? 'Hide' : 'Preview'}</button>
         <button class="btn sm ghost" data-act="del-src" data-id="${s.id}" aria-label="Remove">✕</button></div>`).join('')}</div>` : ''}
@@ -1298,10 +1303,12 @@ ACT['add-url'] = async (btn) => {
 const ingestRender = (nb) => { const r = route(); if (r.view === 'nb' && r.id === nb.id && (r.tab || 'sources') === 'sources') render(); };
 async function ingestFiles(nb, files) {
   const useAI = $('#aiRead')?.checked && S.status.claude;
-  UI.ingest = files.map((f) => ({ name: f.name, status: 'work', msg: 'reading…' }));
+  // each batch keeps its own rows (a second drop mid-upload adds to the list instead of replacing it)
+  const rows = files.map((f) => ({ name: f.name, status: 'work', msg: 'reading…' }));
+  UI.ingest = [...(UI.ingest || []).filter((x) => x.status === 'work'), ...rows];
   ingestRender(nb);
   for (let i = 0; i < files.length; i++) {
-    const f = files[i]; const item = UI.ingest[i];
+    const f = files[i]; const item = rows[i];
     try {
       const ext = (f.name.split('.').pop() || '').toLowerCase();
       // Re-adding a deck that's already in the notebook only fills in its pictures (keeps the study kit as is).
@@ -1363,10 +1370,24 @@ async function ingestFiles(nb, files) {
   setTimeout(() => { if (UI.ingest?.every((x) => x.status !== 'work')) { UI.ingest = UI.ingest.filter((x) => x.status === 'err' || x.status === 'warn'); ingestRender(nb); } }, 5000);
 }
 
+// pdf.js (~320 KB) and JSZip (~100 KB) are only needed when a file is added: load them then, not on every page view.
+const LIBS = {};
+function loadLib(name, src, integrity) {
+  if (window[name]) return Promise.resolve();
+  return (LIBS[name] ||= new Promise((resolve, reject) => {
+    const s = document.createElement('script'); s.src = src; s.integrity = integrity; s.crossOrigin = 'anonymous';
+    s.onload = () => resolve(); s.onerror = () => { delete LIBS[name]; reject(new Error('Couldn’t load the file reader. Check your connection and try again.')); };
+    document.head.appendChild(s);
+  }));
+}
+const needPdf = () => loadLib('pdfjsLib', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', 'sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e');
+const needZip = () => loadLib('JSZip', 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', 'sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG');
 // PDF: text per page + a picture of every page (that's what the lecture actually looks like).
 async function pdfRead(buf, withPictures) {
+  await needPdf();
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  // isEvalSupported: false blocks CVE-2024-4367 (a crafted font in a PDF running script)
+  const doc = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise;
   const out = []; const visuals = [];
   try {
   for (let i = 1; i <= doc.numPages; i++) {
@@ -1424,7 +1445,7 @@ async function slideOrder(zip) {
 }
 // PowerPoint: slide text + speaker notes + the pictures placed on each slide.
 async function pptxRead(file) {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  await needZip(); const zip = await JSZip.loadAsync(await file.arrayBuffer());
   const order = await slideOrder(zip);
   const texts = []; const perSlide = []; const usage = new Map();
   for (const [idx, sl] of order.entries()) {
@@ -1453,7 +1474,7 @@ async function pptxRead(file) {
   return { text: texts.join('\n\n'), visuals };
 }
 async function docxText(file) {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  await needZip(); const zip = await JSZip.loadAsync(await file.arrayBuffer());
   return xmlParas(await zip.file('word/document.xml').async('string'), 'w:p', 'w:t').join('\n');
 }
 function bitmapToJpeg(bmp, max, q = 0.88) {
@@ -1465,6 +1486,22 @@ function bitmapToJpeg(bmp, max, q = 0.88) {
 async function imageToJpeg(file, max = 2000) { return bitmapToJpeg(await createImageBitmap(file), max); }
 
 // Slide pictures live in their own store (kept out of the notebook so saves stay fast).
+// Slide pictures are stored as data: URLs (100-200 KB of text each). Putting them in HTML strings makes every redraw
+// re-parse megabytes; a blob: URL is ~60 characters and the browser keeps the decoded picture.
+const BLOB_URLS = new Map();
+function picUrl(src) {
+  src = String(src || ''); if (!src.startsWith('data:image/') || !src.includes(';base64,')) return src;
+  let u = BLOB_URLS.get(src);
+  if (!u) {
+    try {
+      const [head, b64] = src.split(','); const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      u = URL.createObjectURL(new Blob([bytes], { type: head.slice(5).split(';')[0] }));
+    } catch { u = src; }
+    BLOB_URLS.set(src, u);
+  }
+  return u;
+}
 const VIS = new Map(); // sourceId → { id, numbering, items: [{slide, file, src}] }
 async function putVisuals(sourceId, numbering, items) {
   const rec = { id: sourceId, numbering, items };
@@ -1714,7 +1751,7 @@ function lessonInfo(nb, i) {
   const right = checks.filter((x) => (x.first ?? x.ok) >= 1).length; const total = st.filter((s) => s.k === 'check').length;
   if (L.retaking) { const sc0 = st[L.pos || 0]?.k; return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: sc0 === 'test' ? 'Retake · test waiting' : `Retake · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` }; }
   if (L.done) return { state: 'done', pct: 100, label: total && checks.length ? `Done ✓ · ${right}/${total} quick checks right` : 'Done ✓' };
-  if (st[L.pos || 0]?.k === 'test') return { state: 'going', pct: 90, label: 'Section test waiting' };
+  if (['test', 'done'].includes(st[Math.min(L.pos || 0, st.length - 1)]?.k)) return { state: 'going', pct: 90, label: 'Section test waiting' };
   return { state: 'going', pct: Math.round((100 * (L.pos || 0)) / (st.length - 1)), label: `In progress · step ${Math.min(L.pos || 0, st.length - 1)} of ${st.length - 1}` };
 }
 const lessonNext = (nb) => { const n = nb.digest.cards.length; for (let i = 0; i < n; i++) if (lessonInfo(nb, i).state !== 'done') return i; return 0; };
@@ -1770,7 +1807,7 @@ function renderLessons(nb, el, arg) {
       const inf = infos[i]; const shot = cardShots(nb, c, 1)[0];
       return `<button class="card lesson-tile ${inf.state}" data-act="lesson-open" data-i="${i}" aria-label="Section ${i + 1}: ${esc(c.title)}. ${esc(inf.label)}">
         <span class="lt-num">${inf.state === 'done' ? '✓' : i + 1}</span>
-        <span class="lt-pic">${shot ? `<img loading="lazy" alt="" src="${shot.src}">` : `<span class="lt-emoji">${esc(c.emoji)}</span>`}</span>
+        <span class="lt-pic">${shot ? `<img loading="lazy" alt="" src="${picUrl(shot.src)}">` : `<span class="lt-emoji">${esc(c.emoji)}</span>`}</span>
         <span class="lt-body"><b>${shot ? `${esc(c.emoji)} ` : ''}${esc(c.title)}</b><span class="small muted">${esc(inf.label)}</span>
           <span class="lt-meter"><i style="width:${inf.pct}%"></i></span></span>
         ${i === nx && done < cards.length ? '<span class="lt-next">Up next</span>' : ''}
@@ -1787,13 +1824,14 @@ ACT['lesson-open'] = (el) => {
   if (reduce || !r.width || !document.body.animate) return go(hash);
   const z = document.createElement('div'); z.className = 'lesson-zoom'; z.setAttribute('aria-hidden', 'true');
   const pic = el.querySelector('img'); if (pic) z.innerHTML = `<img alt="" src="${pic.src}">`;
-  Object.assign(z.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-  document.body.appendChild(z);
+  // full-screen layer that starts scaled down onto the tile: only transform/opacity animate (GPU, no layout per frame)
   const W = document.documentElement.clientWidth, H = window.innerHeight;
+  Object.assign(z.style, { left: '0px', top: '0px', width: W + 'px', height: H + 'px', transformOrigin: '0 0' });
+  document.body.appendChild(z);
   const a = z.animate([
-    { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', borderRadius: '18px' },
-    { left: '0px', top: '0px', width: W + 'px', height: H + 'px', borderRadius: '0px' },
-  ], { duration: 420, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+    { transform: `translate(${r.left}px, ${r.top}px) scale(${r.width / W}, ${r.height / H})`, opacity: 0.6 },
+    { transform: 'none', opacity: 1 },
+  ], { duration: 380, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
   let opened = false;
   const open = () => {
     if (opened) return; opened = true; UI.lessonDir = 'in'; go(hash);
@@ -1851,7 +1889,7 @@ function verifyStepSources(nb, d) {
 }
 function stepSrcHTML(x, many) {
   if (x.src?.ok) {
-    const where = x.src.n ? `${x.src.kind === 'Slide' ? 'slide' : 'page'} ${x.src.n}` : 'your notes';
+    const where = x.src.n ? `${x.src.kind === 'Slide' ? 'slide' : 'page'} ${num(x.src.n)}` : 'your notes';
     return `<details class="step-src small"><summary>📄 From ${where}${many && x.src.name ? ` of ${esc(x.src.name)}` : ''}${x.added ? ' · plus some textbook background' : ''}</summary><blockquote>“${esc(x.quote)}”</blockquote></details>`;
   }
   if (x.src?.ok === false && !x.added) return '<div class="step-src small src-miss">⚠️ Couldn’t match this step to your slides. Check it against your notes.</div>';
@@ -1993,6 +2031,8 @@ function renderLesson(nb, el, i) {
     return;
   }
   const d = L.data; const st = lessonStages(d); L.pos = Math.min(L.pos || 0, st.length - 1);
+  // the stage list can change length after a fact-check/rebuild: never land on "Section complete" unless it really is
+  if (st[L.pos].k === 'done' && (!L.done || L.retaking)) { const ti = st.findIndex((x) => x.k === 'test'); L.pos = ti >= 0 ? ti : Math.max(0, st.length - 2); }
   const s = st[L.pos]; const steps = d.steps.length;
   const dots = st.filter((x) => x.k !== 'check').map((x, k) => { const at = st.indexOf(x); return `<i class="${at < L.pos ? 'f' : ''} ${at === L.pos || (s.k === 'check' && x.k === 'step' && x.j === s.j) ? 'on' : ''}"></i>`; }).join('');
   el.innerHTML = `<div class="lesson-wrap">
@@ -2104,7 +2144,7 @@ function stepPicHTML(nb, i, L, j) {
   if (o?.slide) {
     const sh = refShots(nb, [o.slide])[0];
     if (sh) { (UI.shots ||= {})[`lstep${i}_${j}`] = [sh];
-      return `<figure class="step-pic" id="stepPic"><button class="step-pic-img" data-act="zoom-shot" data-key="lstep${i}_${j}" data-k="0" aria-label="Enlarge"><img src="${TRIMMED.get(sh.src) || sh.src}" data-trim="${TRIMMED.has(sh.src) ? '' : '1'}" alt=""${esc(sh.kind === 'pdf' ? 'Page' : 'Slide')} ${sh.n}"></button>
+      return `<figure class="step-pic" id="stepPic"><button class="step-pic-img" data-act="zoom-shot" data-key="lstep${i}_${j}" data-k="0" aria-label="Enlarge"><img src="${TRIMMED.get(sh.src) || sh.src}" data-trim="${TRIMMED.has(sh.src) ? '' : '1'}" alt="${esc(sh.kind === 'pdf' ? 'Page' : 'Slide')} ${num(sh.n)}"></button>
         ${look}<div class="step-pic-src"><span>From your ${sh.kind === 'pdf' ? 'page' : 'slide'} ${sh.n} · tap to enlarge</span><button class="linklike" data-act="step-pic-hide" data-j="${j}">Hide</button></div></figure>`; }
   }
   const w = o?.alts?.[o.at || 0];
@@ -2129,7 +2169,8 @@ ACT['step-pic-find'] = async (el) => {
   if (!alts.length) try { alts = await findStepPics(o, x, nb.digest.cards[i].title); } catch { /* none */ }
   UI.stepPicFind = null;
   if (alts.length) { o.alts = alts; o.at = 0; o.hidden = false; await save(nb); } else toast('Couldn’t find a good picture for this step.');
-  if (onLesson(nb, i)) redrawStepPic(nb, i, L, j);
+  const cur = lessonStages(L.data)[L.pos]; // only redraw if the student is still on this step
+  if (onLesson(nb, i) && cur?.j === j) redrawStepPic(nb, i, L, j);
 };
 ACT['zoom-web'] = (el) => {
   const { o } = stepPicCtx(el); const w = o?.alts?.[o.at || 0]; if (!w) return;
@@ -2251,11 +2292,11 @@ function lessonStageHTML(nb, i, L, s, steps) {
         <div class="row"><button class="btn primary" data-act="lesson-short" ${grading ? 'disabled' : ''}>${grading ? '<span class="spinner"></span> Checking…' : hinting ? 'Check again' : 'Check my answer'}</button></div>`;
     }
     const v = raw?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
-    const hintBox = hinting ? `<div class="verdict ${v} hint-box"><h3>${v === 'partial' ? '◐ Almost there' : '✗ Not quite'}</h3>
+    const hintBox = hinting ? `<div class="verdict ${vcls(v)} hint-box"><h3>${v === 'partial' ? '◐ Almost there' : '✗ Not quite'}</h3>
         <div>💡 <b>Hint:</b> ${esc(ch.hint || `Reread step ${s.j + 1} and look at the bold words.`)}</div>
         <div class="small muted" style="margin-top:4px">${ch.type === 'mcq' ? 'Pick another option.' : 'Change your answer and check again.'}</div>
         <div class="row" style="margin-top:8px"><button class="btn sm" data-act="lesson-back">‹ Reread the step</button><button class="btn sm ghost" data-act="lesson-reveal">Show me the answer</button>${ch.type === 'short' && v !== 'correct' ? '<button class="btn sm ghost" data-act="lesson-override" title="If the grader got it wrong, count your answer as correct">✋ I was right, count it</button>' : ''}</div></div>` : '';
-    const finalBox = fin ? `<div class="verdict ${v}"><h3>${raw.revealed && v !== 'correct' ? '👀 Here’s the answer' : head}${raw.tries > 1 && v === 'correct' ? ' on the second try' : ''}</h3>
+    const finalBox = fin ? `<div class="verdict ${vcls(v)}"><h3>${raw.revealed && v !== 'correct' ? '👀 Here’s the answer' : head}${raw.tries > 1 && v === 'correct' ? ' on the second try' : ''}</h3>
         ${raw.feedback && !raw.revealed ? `<div>${esc(raw.feedback)}</div>` : ''}
         ${ch.type === 'short' || raw.revealed ? `<div class="small" style="margin-top:6px"><b>Answer:</b> ${esc(ch.answer)}</div>` : ''}
         ${ch.explanation ? `<div class="small" style="margin-top:6px">${esc(ch.explanation)}</div>` : ''}
@@ -2408,7 +2449,7 @@ async function buildTest(nb, i) {
     const wl = await keepAwake();
     try {
       const taught = lessonText(L.data);
-      const earlierCards = nb.digest.cards.slice(0, i).map((x, k) => ({ x, k })).sort(() => Math.random() - 0.5).slice(0, 3);
+      const earlierCards = nb.digest.cards.slice(0, i).map((x, k) => ({ x, k })).map((v) => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map((p) => p[1]).slice(0, 3);
       const earlier = earlierCards.map(({ x, k }) => ({ title: x.title, points: x.points, lesson: lessonText(lessonOf(nb, k)?.data).slice(0, 2500) }));
       const req = { sources: aiSources(nb), title: c.title, points: c.points, lesson: taught,
         steps: (L.data.steps || []).map((s) => `${s.title}: ${String(s.explain || '').slice(0, 220)}`),
@@ -2517,7 +2558,7 @@ function testScore(L) {
 function frHTML(nb, i, T, p) {
   const key = `${nb.id}:${i}:${p}`; const P = testFRs(T)[p]; const A = testFRAnswers(T)[p]; const R = A?.result; const grading = !!UI.paraGrading?.[key];
   const body = R ? `<div class="lesson-mine"><span class="small muted">Your answer</span><div>${esc(A.text)}</div></div>
-      <div class="verdict ${R.verdict}"><div class="row between"><h3>${{ correct: '✓ Strong answer', partial: '◐ Good start', incorrect: '✗ Needs more' }[R.verdict] || 'Graded'}</h3><b>${Math.round(R.score)}%</b></div>
+      <div class="verdict ${vcls(R.verdict)}"><div class="row between"><h3>${{ correct: '✓ Strong answer', partial: '◐ Good start', incorrect: '✗ Needs more' }[R.verdict] || 'Graded'}</h3><b>${Math.round(R.score)}%</b></div>
         <div class="meter" style="margin:6px 0 8px"><i style="width:${Math.round(R.score)}%"></i></div>
         ${R.feedback ? `<div>${esc(R.feedback)}</div>` : ''}
         ${R.covered?.length ? `<div class="small fb-good" style="margin-top:8px"><b>✓ You covered</b><ul class="list-good">${R.covered.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
@@ -2696,7 +2737,7 @@ async function buildDeep(nb, i) {
   delete UI.deepBusy[key];
 }
 function renderDeep(nb, el, arg) {
-  const i = +arg; const c = nb.digest?.cards[i];
+  const i = arg === '' || arg === undefined ? -1 : +arg; const c = nb.digest?.cards[i];
   if (!c) return go(`#/nb/${nb.id}/lessons`);
   let D = deepOf(nb, i); const key = `${nb.id}:${i}`;
   if (UI.deepBusy?.[key]) D = null; // a new deep dive is being written
@@ -2770,7 +2811,7 @@ function deepQHTML(nb, i, D, q, k) {
   }
   const v = a?.verdict; const head = { correct: '✓ Correct', partial: '◐ Partly right', incorrect: '✗ Not quite' }[v] || '';
   return `<div class="test-q deep-q"><div class="test-qh"><span class="test-n">${k + 1}</span><b>${esc(q.question)} ${q.beyond ? BEYOND : ''}</b></div>${body}
-    ${a ? `<div class="verdict ${v}"><h3>${head}</h3>${a.feedback ? `<div class="small">${esc(a.feedback)}</div>` : ''}
+    ${a ? `<div class="verdict ${vcls(v)}"><h3>${head}</h3>${a.feedback ? `<div class="small">${esc(a.feedback)}</div>` : ''}
       ${q.type === 'short' ? `<div class="small" style="margin-top:6px"><b>Answer:</b> ${esc(q.answer)}</div>` : ''}
       ${q.explanation ? `<div class="small" style="margin-top:6px">${esc(q.explanation)}</div>` : ''}
       ${q.type === 'short' && v !== 'correct' ? `<div class="row" style="margin-top:8px"><button class="btn sm ghost" data-act="deep-override" data-q="${k}">✋ I was right, count it</button></div>` : a.overridden ? '<div class="small muted" style="margin-top:6px">✋ You marked this correct.</div>' : ''}</div>` : ''}</div>`;
@@ -2813,16 +2854,18 @@ ACT['deep-mcq'] = async (el) => {
   if (ok) gainXP(3, 'deep-dive question');
   await deepAnswered(nb, i, D); if (onDeep(nb, i)) deepRedraw(nb, i);
 };
+const DEEP_PENDING = new Set(); // questions being graded right now (so one can't be graded twice)
 ACT['deep-short'] = async (el) => {
   const nb = curNb(); const i = +route().arg; const D = deepOf(nb, i); const k = +el.dataset.q; if (!D || D.answers[k]) return;
+  const key = `${nb.id}:${i}:${k}`; if (DEEP_PENDING.has(key)) return;
   const q = D.data.questions[k]; const text = (document.querySelector(`[data-dq="${k}"]`)?.value || '').trim();
   if (wordCount(text) < 3) { toast('Write your answer first: a sentence or two.'); return; }
-  UI.deepGrading = `${nb.id}:${i}:${k}`; if (onDeep(nb, i)) deepRedraw(nb, i);
+  DEEP_PENDING.add(key); UI.deepGrading = key; if (onDeep(nb, i)) deepRedraw(nb, i);
   let r = quickGrade(text, q.answer);
   if (!r && aiOn()) { try { r = await ai('grade', { concept: nb.digest.cards[i].title, question: q.question, answer: q.answer, response: text }); } catch (e) { aiError(e); } }
   if (!r?.verdict) { const cv = coverage(text, q.answer); r = { verdict: cv >= 0.6 ? 'correct' : cv >= 0.3 ? 'partial' : 'incorrect', feedback: 'Compare with the answer below.' }; }
   const ok = r.verdict === 'correct' ? 1 : r.verdict === 'partial' ? 0.5 : 0;
-  D.answers[k] = { text, ok, verdict: r.verdict, feedback: r.feedback || '' }; UI.deepGrading = null;
+  D.answers[k] = { text, ok, verdict: r.verdict, feedback: r.feedback || '' }; DEEP_PENDING.delete(key); if (UI.deepGrading === key) UI.deepGrading = null;
   record(nb, itemConcept(nb, i, q), ok); await save(nb); if (onDeep(nb, i)) deepRedraw(nb, i);
   if (ok) gainXP(ok >= 1 ? 4 : 2, 'deep-dive question');
   await deepAnswered(nb, i, D); if (onDeep(nb, i)) deepRedraw(nb, i);
@@ -3056,6 +3099,7 @@ function renderLearn(nb, el) {
   UI.cardRecall ||= {};
   UI.shots = {};
   loadVisuals(nb).then((changed) => { if (changed && route().tab === 'learn') render(); });
+  slimOldIlls(nb);
   const noPics = nb.sources.filter((s) => ['pdf', 'pptx'].includes(s.kind) && s.images === undefined && !/\(sample\)/.test(s.name));
   el.innerHTML = `
   <div class="stack">
@@ -3076,26 +3120,33 @@ function renderLearn(nb, el) {
   </div>`;
   drawMap(nb);
 }
+// pictures saved before slimIll existed: shrink them once in the background (shown the same, ~5x smaller)
+const SLIMMED = new Set();
+async function slimOldIlls(nb) {
+  if (SLIMMED.has(nb.id)) return; SLIMMED.add(nb.id); let n = 0;
+  for (const v of Object.values(nb.illustrations || {})) { const before = v?.src; await slimIll(v); if (v?.src !== before) n++; }
+  if (n) await save(nb);
+}
 function summaryCard(nb, c, i, mode) {
   const st = UI.cardRecall[`${nb.id}:${i}`];
   const head = `<div class="row between"><span class="emoji">${esc(c.emoji)}</span><span class="ref">${esc(refLabel(nb, c.source_ref))}</span></div>${cardPictures(nb, c, i)}<h3 style="margin:0">${esc(c.title)}</h3>`;
   if (mode === 'study') {
-    return `<div class="card scard">${head}<ul>${c.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
+    return `<div class="card scard" data-sc="${i}">${head}<ul>${c.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>
       ${c.analogy ? `<div class="analogy">🔗 ${esc(c.analogy)}</div>` : ''}
       <a class="btn sm ghost deep-link" href="#/nb/${nb.id}/deep/${i}">🔎 Go deeper</a></div>`;
   }
   if (!st?.revealed) {
-    return `<div class="card scard">${head}<div class="small muted">What were the ${c.points.length} key points? Write everything you can recall.</div>
+    return `<div class="card scard" data-sc="${i}">${head}<div class="small muted">What were the ${c.points.length} key points? Write everything you can recall.</div>
       <textarea data-cr="${i}" placeholder="From memory…">${esc(st?.text || '')}</textarea>
       <button class="btn primary sm" data-act="card-reveal" data-i="${i}">Reveal & compare</button></div>`;
   }
-  return `<div class="card scard">${head}<ul>${c.points.map((p, j) => `<li class="${st.hits[j] ? 'hit' : 'miss'}">${st.hits[j] ? '✓ ' : ''}${esc(p)}</li>`).join('')}</ul>
+  return `<div class="card scard" data-sc="${i}">${head}<ul>${c.points.map((p, j) => `<li class="${st.hits[j] ? 'hit' : 'miss'}">${st.hits[j] ? '✓ ' : ''}${esc(p)}</li>`).join('')}</ul>
     <div class="small"><b>${st.hits.filter(Boolean).length}/${c.points.length}</b> recalled. ${st.hits.every(Boolean) ? 'Perfect! 🎉' : 'Red ones are your gaps; reread them now.'}</div>
     <button class="btn sm" data-act="card-retry" data-i="${i}">Try again</button></div>`;
 }
 function shotStrip(key, shots) {
   UI.shots[key] = shots;
-  return `<div class="shots ${shots.length === 1 ? 'one' : ''}">${shots.map((v, k) => `<figure data-act="zoom-shot" data-key="${esc(key)}" data-k="${k}"><img loading="lazy" alt="${esc(v.kind === 'pdf' ? 'Page' : 'Slide')} ${v.n}" src="${v.src}"><span>${v.kind === 'pdf' ? 'p.' : 'Slide'} ${v.n}</span></figure>`).join('')}</div>`;
+  return `<div class="shots ${shots.length === 1 ? 'one' : ''}">${shots.map((v, k) => `<figure data-act="zoom-shot" data-key="${esc(key)}" data-k="${k}"><img loading="lazy" alt="${esc(v.kind === 'pdf' ? 'Page' : 'Slide')} ${num(v.n)}" src="${picUrl(v.src)}"><span>${v.kind === 'pdf' ? 'p.' : 'Slide'} ${v.n}</span></figure>`).join('')}</div>`;
 }
 function cardPictures(nb, c, i) {
   const picked = refShots(nb, c.image_refs);
@@ -3111,7 +3162,7 @@ ACT['zoom-shot'] = (el) => { UI.zoom = { list: UI.shots[el.dataset.key] || [], i
 function showZoom() {
   const { list, i } = UI.zoom; const v = list[i]; if (!v) return;
   modal(`<div class="row between" style="margin-bottom:8px"><b>${v.kind === 'pdf' ? 'Page' : 'Slide'} ${v.n}</b><span class="small muted">${esc(v.name)}</span></div>
-    <img src="${v.src}" alt="">
+    <img src="${picUrl(v.src)}" alt="">
     <div class="row" style="justify-content:space-between;margin-top:10px">
       <button class="btn" data-act="zoom-step" data-d="-1" ${i ? '' : 'disabled'}>‹ Prev</button>
       <span class="small muted">${i + 1} / ${list.length}</span>
@@ -3130,11 +3181,21 @@ ACT['card-draw'] = async (el) => {
   try {
     const r = await api('/api/illustrate', { name: c.title, definition: c.points.join('; '), visual_hint: `A labeled teaching diagram of: ${c.title}. Show ${c.points.join('; ')}`, mnemonic: c.analogy, style: 'diagram', engine: 'svg', sources: aiSources(nb) });
     if (r.kind === 'svg' && !r.svg) throw new Error('The drawing came back empty. Try again.');
-    nb.illustrations[key] = r; await save(nb);
+    nb.illustrations[key] = await slimIll(r); await save(nb);
   } catch (e) { aiError(e); }
   delete UI.illBusy[key]; render();
 };
-ACT['card-mode'] = (el) => { UI.cardMode = el.dataset.m; render(); };
+// redraw just one summary card (the rest of the tab, its pictures and the concept map stay as they are)
+function redrawSummaryCard(nb, i) {
+  const old = document.querySelector(`.scard[data-sc="${i}"]`); if (!old || route().tab !== 'learn') return render();
+  old.outerHTML = summaryCard(nb, nb.digest.cards[i], i, UI.cardMode || 'recall');
+}
+ACT['card-mode'] = (el) => {
+  UI.cardMode = el.dataset.m; const nb = curNb(); const grid = document.querySelector('.scard')?.parentElement;
+  if (!grid) return render();
+  el.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
+  grid.innerHTML = nb.digest.cards.map((c, i) => summaryCard(nb, c, i, UI.cardMode)).join('');
+};
 ACT['card-reveal'] = async (el) => {
   const nb = curNb(); const i = +el.dataset.i; const c = nb.digest.cards[i];
   const text = $(`[data-cr="${i}"]`).value; clearDraft($(`[data-cr="${i}"]`));
@@ -3151,9 +3212,9 @@ ACT['card-reveal'] = async (el) => {
   const xp = xpGain(nb, `recall:${i}`, 2 + 3 * hits.filter(Boolean).length);
   await save(nb);
   if (xp) await gainXP(xp, 'card recall');
-  render();
+  redrawSummaryCard(nb, i);
 };
-ACT['card-retry'] = (el) => { const nb = curNb(); UI.cardRecall[`${nb.id}:${el.dataset.i}`] = { revealed: false, text: '' }; render(); };
+ACT['card-retry'] = (el) => { const nb = curNb(); UI.cardRecall[`${nb.id}:${el.dataset.i}`] = { revealed: false, text: '' }; redrawSummaryCard(nb, +el.dataset.i); };
 
 function conceptCard(nb, c) {
   const m = mastery(nb, c.id);
@@ -3174,7 +3235,9 @@ function conceptCard(nb, c) {
     </div></div>`;
 }
 const AI_DRAWN = '🎨 AI drawing: labels not checked, trust your slides';
-const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(v.svg || '') : /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(String(v.src || '')) ? v.src : '');
+const illSrc = (v) => (v.kind === 'svg' ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(v.svg || '') : /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(String(v.src || '')) ? picUrl(v.src) : '');
+// AI pictures come back ~1400 px PNG (~700 KB); they're shown at ~300-700 px, so keep a smaller JPEG
+async function slimIll(r) { if (r?.kind !== 'svg' && /^data:image\//.test(String(r?.src || '')) && r.src.length > 250000) { try { r.src = 'data:image/jpeg;base64,' + (await shrinkDataUrl(r.src, 900, 0.85)); } catch { /* keep the original */ } } return r; }
 ACT.illustrate = async (el) => {
   const nb = curNb(); const c = nb.digest.concepts.find((x) => x.id === el.dataset.cid); const style = el.dataset.style; const key = `${c.id}:${style}`;
   if (!S.status.claude && !S.status.gemini) { toast('Illustrations need the AI tutor — see Settings', 'err'); return openSettings(); }
@@ -3182,7 +3245,7 @@ ACT.illustrate = async (el) => {
   try {
     const r = await api('/api/illustrate', { ...c, style, sources: style === 'diagram' ? aiSources(nb) : [] });
     if (r.kind === 'svg' && !r.svg) throw new Error('The drawing came back empty. Try again.');
-    nb.illustrations[key] = r; await save(nb);
+    nb.illustrations[key] = await slimIll(r); await save(nb);
     if (r.note) toast(r.note);
   } catch (e) { aiError(e); }
   delete UI.illBusy[key]; render();
@@ -3199,7 +3262,7 @@ let mermaidLoading = null;
 function loadMermaid() {
   if (window.mermaid) return Promise.resolve();
   return (mermaidLoading ||= new Promise((resolve) => {
-    const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js'; s.async = true;
+    const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js'; s.async = true; s.integrity = 'sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr'; s.crossOrigin = 'anonymous';
     s.onload = () => resolve(); s.onerror = () => { s.remove(); mermaidLoading = null; resolve(); }; // a later visit can try again
     document.head.appendChild(s);
   }));
@@ -3224,7 +3287,7 @@ async function drawMap(nb) {
   const blanks = UI.mapMode === 'blanks';
   const key = `${nb.id}:${nb.builtAt || 0}`;
   if (blanks && (!UI.hidden || UI.hidden.key !== key)) {
-    const ids = map.nodes.map((n) => n.id).sort(() => Math.random() - 0.5);
+    const ids = map.nodes.map((n) => n.id).map((v) => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map((p) => p[1]);
     UI.hidden = { key, set: new Set(ids.slice(0, Math.max(3, Math.round(ids.length * 0.4)))), tries: {} };
   }
   const groups = [...new Set(map.nodes.map((n) => n.group))];
@@ -3311,7 +3374,7 @@ function recallSession(el) {
       : `<div class="answer-box"><div class="small muted">Your answer${R.conf ? ` · you felt ${CONF[R.conf].split(' ')[1].toLowerCase()}` : ''}</div>${R.draft ? esc(R.draft) : res.verdict === null ? '<i class="muted">(answered in your head)</i>' : '<i class="muted">(blank)</i>'}</div>
         ${res.verdict === 'incorrect' && R.conf === 'sure' ? `<div class="verdict incorrect" style="border:2px solid var(--bad)"><h3>⚠️ Confident mistake</h3><div>You were sure, but this is wrong. These are the most valuable errors to catch: read the answer, then say out loud <b>why</b> your version was wrong. Fixing a confident mistake tends to stick better than learning something new.</div></div>` : ''}
         ${res.verdict === 'correct' && R.conf === 'guess' ? `<div class="small" style="margin-top:8px;color:var(--warn)">🎲 Right, but you guessed, so this card comes back sooner until you actually know it.</div>` : ''}
-        ${res.verdict ? `<div class="verdict ${res.verdict}"><h3>${{ correct: '✅ Correct', partial: '🟡 Partly right', incorrect: '❌ Not quite' }[res.verdict]}</h3>
+        ${res.verdict ? `<div class="verdict ${vcls(res.verdict)}"><h3>${{ correct: '✅ Correct', partial: '🟡 Partly right', incorrect: '❌ Not quite' }[res.verdict]}</h3>
           ${res.feedback ? `<div>${esc(res.feedback)}</div>` : ''}${res.missing?.length ? `<div class="small" style="margin-top:6px"><b>Missing:</b> ${res.missing.map(esc).join('; ')}</div>` : ''}</div>` : ''}
         <div class="answer-box"><div class="small muted">Model answer</div>${esc(card.answer)}</div>
         <div class="small muted" style="margin-top:14px">${res.verdict ? 'How well did you know it? (suggested from the grading)' : 'How well did you know it?'}</div>
@@ -3324,7 +3387,7 @@ function recallSession(el) {
 function refShots(nb, refs) {
   return (refs || []).map((ref) => {
     const v = VIS.get(ref.sid); const it = v?.items?.[ref.idx]; const src = nb.sources.find((x) => x.id === ref.sid);
-    return it && src ? { ...it, n: v.numbering === 'file' ? it.file : it.slide, name: src.name, kind: src.kind } : null;
+    return it && src ? { ...it, n: num(v.numbering === 'file' ? it.file : it.slide), name: src.name, kind: src.kind } : null;
   }).filter(Boolean);
 }
 function recallStart(nb, el, focus) {
@@ -3334,7 +3397,7 @@ function recallStart(nb, el, focus) {
   const pics = nb.cards.filter((c) => c.kind === 'picture').length;
   const fc = focus ? nb.digest.concepts.find((c) => c.id === focus) : null;
   const courseMates = nb.course ? S.notebooks.filter((n) => n.course === nb.course && n.digest).length : 0;
-  UI.aiGrade ??= true;
+  UI.aiGrade ??= S.meta.aiGrade !== false;
   el.innerHTML = `<div class="q-card stack">
     <div class="card overview"><h2>🧠 Active recall</h2>
       <p>Type answers from memory. Generating the answer yourself is what builds memory, not rereading. Before checking, tap how sure you are: catching <b>confident mistakes</b> is one of the fastest ways to improve.</p>
@@ -3358,7 +3421,7 @@ function recallStart(nb, el, focus) {
     ${waiting > 0 ? `<div class="small muted">${waiting} more new card${waiting > 1 ? 's' : ''} wait for tomorrow (${NEW_PER_DAY} new a day keeps reviews manageable).</div>` : ''}
     ${locked ? `<div class="small muted">🔒 ${locked} card${locked > 1 ? 's' : ''} unlock as you finish each section’s lesson. Studying from your slides instead? <a href="#" data-act="rc-unlock-all">Unlock all cards</a></div>` : ''}
     ${examDays(nb) ? `<div class="small muted">📅 Spacing is aimed at your exam in ${Math.ceil(examDays(nb))} day${Math.ceil(examDays(nb)) === 1 ? '' : 's'} (change it in Progress).</div>` : ''}</div>`;
-  $('#aiGrade')?.addEventListener('change', (e) => (UI.aiGrade = e.target.checked));
+  $('#aiGrade')?.addEventListener('change', (e) => { UI.aiGrade = e.target.checked; S.meta.aiGrade = UI.aiGrade; saveMeta(); });
 }
 ACT['rc-start'] = (el) => startRecall(curNb(), el.dataset.mode, el.dataset.focus, route().arg || '');
 ACT['drill-weak'] = () => { const nb = curNb(); UI.exam = null; if (startRecall(nb, 'weak', '', '')) go(`#/nb/${nb.id}/recall`); };
@@ -3400,7 +3463,7 @@ function startRecall(nb, mode, focus, routeFocus) {
   let mix = [];
   if (mode === 'due') {
     mix = S.notebooks.filter((n) => n.id !== nb.id && n.digest).flatMap((n) => dueCards(n).map((card) => ({ nb: n, card })))
-      .sort(() => Math.random() - 0.5).slice(0, 3);
+      .map((v) => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map((p) => p[1]).slice(0, 3);
   }
   return beginSession('nb:' + nb.id, routeFocus, [...items, ...mix], (mode === 'cram' ? 40 : 20) + mix.length);
 }
@@ -3516,7 +3579,7 @@ function renderCourse(course) {
   const nbs = courseNotebooks(course);
   const due = nbs.reduce((a, n) => a + dueCards(n).length, 0);
   const weak = nbs.flatMap((nb) => weakConcepts(nb, 4).map((w) => ({ ...w, nb }))).sort((a, b) => a.m - b.m).slice(0, 8);
-  UI.aiGrade ??= true;
+  UI.aiGrade ??= S.meta.aiGrade !== false;
   el.innerHTML = `<div class="nb-head"><div><a href="#/" class="small">← All notebooks</a><h1>📚 ${esc(course)}</h1><div class="small muted">${nbs.length} lecture${nbs.length === 1 ? '' : 's'} with study kits</div></div></div>
   <div class="q-card stack" style="margin-top:16px">
     <div class="card overview"><h2>Mixed review across lectures</h2>
@@ -3531,7 +3594,7 @@ function renderCourse(course) {
     <div class="card bars"><h3>Lectures</h3>${nbs.map((nb) => `<div class="b"><a href="#/nb/${nb.id}"><b>${esc(nb.title)}</b></a><div class="meter"><i style="width:${pct(nbMastery(nb))}%"></i></div><span class="small">${pct(nbMastery(nb))}%</span><span class="small muted">${dueCards(nb).length} due</span></div>`).join('')}</div>
     ${weak.length ? `<div class="card bars"><h3>🎯 Weakest concepts in ${esc(course)}</h3>${weak.map((w) => `<div class="b"><span><b>${esc(w.c.name)}</b><div class="small muted">${esc(w.nb.title)}</div></span><div class="meter"><i style="width:${pct(w.m)}%"></i></div><span class="small">${pct(w.m)}%</span><a class="btn sm" href="#/nb/${w.nb.id}/recall/${w.c.id}">Drill</a></div>`).join('')}</div>` : ''}
   </div>`;
-  $('#aiGrade')?.addEventListener('change', (e) => (UI.aiGrade = e.target.checked));
+  $('#aiGrade')?.addEventListener('change', (e) => { UI.aiGrade = e.target.checked; S.meta.aiGrade = UI.aiGrade; saveMeta(); });
 }
 ACT['course-start'] = (el) => {
   const course = decodeURIComponent(location.hash.split('/')[2] || ''); const mode = el.dataset.mode;
@@ -3591,7 +3654,7 @@ function feynmanResult(r) {
 }
 ACT['teach-sel'] = (el) => { UI.teachSel = +el.dataset.i; UI.teachDraft = ''; render(); };
 ACT['teach-submit'] = async () => {
-  const nb = curNb(); const p = nb.digest.feynman_prompts[UI.teachSel]; const key = p.concept_id + ':' + UI.teachSel;
+  const nb = curNb(); const sel = UI.teachSel; const p = nb.digest.feynman_prompts[sel]; const key = p.concept_id + ':' + sel;
   const text = $('#teachIn').value.trim(); if (text.length < 15) return toast('Write a bit more — at least a couple of sentences', 'err');
   const hist = (nb.feynman[key] ||= []);
   UI.teachBusy = true; render();
@@ -3600,8 +3663,8 @@ ACT['teach-submit'] = async () => {
       history: hist.map((h) => ({ who: h.who, text: h.who === 'student' ? h.text : `score ${h.result?.score}; follow-up asked: ${h.result?.follow_up_question}` })) });
     hist.push({ who: 'student', text }, { who: 'tutor', result: r });
     record(nb, p.concept_id, Math.min(1, r.score / 100), 'teach'); gapCards(nb, r.gaps, () => p.concept_id, 'teach');
-    const tx = xpGain(nb, `teach:${UI.teachSel}`, 5 + Math.round(Math.max(0, Math.min(100, r.score || 0)) / 4));
-    UI.teachDraft = ''; keepDel(`teach|${nb.id}|${UI.teachSel}|${hk(p.prompt)}`); await save(nb); if (tx) await gainXP(tx, 'teach-back');
+    const tx = xpGain(nb, `teach:${sel}`, 5 + Math.round(Math.max(0, Math.min(100, r.score || 0)) / 4));
+    UI.teachDraft = ''; keepDel(`teach|${nb.id}|${sel}|${hk(p.prompt)}`); await save(nb); if (tx) await gainXP(tx, 'teach-back');
   } catch (e) { aiError(e); }
   UI.teachBusy = false; render();
 };
@@ -3647,10 +3710,11 @@ ACT['chat-starter'] = (el) => sendChat(curNb(), el.textContent);
 ACT['chat-clear'] = async () => { const nb = curNb(); nb.chat = []; await save(nb); render(); };
 async function sendChat(nb, text) {
   if (!text || UI.chatBusy) return;
+  if (!nb.sources.length) return toast('Add material first');
   if (!S.status.claude) return openSettings();
   nb.chat.push({ role: 'user', content: text }); UI.chatBusy = true; render();
   const log = $('#chatLog') || document.createElement('div'); const bubble = document.createElement('div'); bubble.className = 'msg assistant'; bubble.innerHTML = '<span class="spinner"></span>'; log.appendChild(bubble); log.scrollTop = log.scrollHeight;
-  let out = '';
+  let out = ''; let paint = 0;
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sources: aiSources(nb), messages: nb.chat.slice(-12) }) });
     if (!r.ok) { const j = await r.json().catch(() => ({})); const e = new Error(j.error || 'Chat failed'); e.code = j.code; throw e; }
@@ -3661,7 +3725,7 @@ async function sendChat(nb, text) {
       let k; while ((k = buf.indexOf('\n\n')) >= 0) {
         const line = buf.slice(0, k).replace(/^data: /, ''); buf = buf.slice(k + 2);
         let ev = null; try { ev = JSON.parse(line); } catch { /* partial */ }
-        if (ev?.text) { out += ev.text; bubble.innerHTML = md(out); log.scrollTop = log.scrollHeight; }
+        if (ev?.text) { out += ev.text; if (!paint) paint = requestAnimationFrame(() => { paint = 0; bubble.innerHTML = md(out); log.scrollTop = log.scrollHeight; }); } // redraw once per frame, not per chunk
         if (ev?.error) streamErr = ev;
       }
     }
@@ -3819,15 +3883,15 @@ ACT['exam-gen'] = async () => {
       if (kc) questions = questions.filter((_, k) => !kc.drop.has(k));
       questions = questions.slice(0, count);
     } else {
-      questions = [...nb.cards].sort(() => Math.random() - 0.5).slice(0, count).map((c) => ({ type: 'short', question: c.question, options: [], answer: c.answer, explanation: '', concept_id: c.concept_id }));
+      questions = [...nb.cards].map((v) => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map((p) => p[1]).slice(0, count).map((c) => ({ type: 'short', question: c.question, options: [], answer: c.answer, explanation: '', concept_id: c.concept_id }));
     }
   } catch (e) { UI.exam = null; aiError(e); return render(); }
   if (S.status.claude) {
-    const pics = nb.cards.filter((c) => c.kind === 'picture' && !c.unverified).sort(() => Math.random() - 0.5).slice(0, Math.min(3, Math.ceil(count / 5)));
+    const pics = nb.cards.filter((c) => c.kind === 'picture' && !c.unverified).map((v) => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map((p) => p[1]).slice(0, Math.min(3, Math.ceil(count / 5)));
     pics.forEach((c) => questions.splice(Math.floor(Math.random() * (questions.length + 1)), 0, { type: 'short', question: c.question, options: [], answer: c.answer, explanation: '', concept_id: c.concept_id, image: c.image }));
   } else questions.forEach((q, k) => { const c = nb.cards.find((x) => x.question === q.question); if (c?.image) questions[k].image = c.image; });
   await loadVisuals(nb);
-  questions.forEach((q) => { if (q.type === 'mcq') q.options = [...q.options].sort(() => Math.random() - 0.5); });
+  questions.forEach((q) => { if (q.type === 'mcq') q.options = [...q.options].map((v) => [Math.random(), v]).sort((p, q) => p[0] - q[0]).map((p) => p[1]); });
   if (!questions.length) { UI.exam = null; toast('Couldn’t make exam questions this time. Try again.', 'err'); return render(); }
   UI.exam = { nb: nb.id, phase: 'take', questions, answers: questions.map(() => ''), i: 0, start: Date.now(), deadline: timed ? Date.now() + questions.length * 90e3 : 0 };
   examSave(UI.exam); render();
@@ -3953,9 +4017,14 @@ function checkinStart(nb, i) {
   UI.ci = { nb: nb.id, i, n: (lessonOf(nb, i).checkins || []).length, items, res: {}, pick: {}, typed: {}, shown: {} };
 }
 function renderCheckin(nb, el, arg) {
+  if (arg === '' || arg === undefined || !Number.isInteger(+arg)) return go(`#/nb/${nb.id}/recall`);
   const i = +arg; const L = lessonOf(nb, i);
   if (!L?.done) { el.innerHTML = `<div class="card empty"><h3>No check-in here</h3><p class="muted">Check-ins start 3 days after you finish a section.</p><a class="btn" href="#/nb/${nb.id}/lessons">Back to lessons</a></div>`; return; }
-  if (UI.ci?.nb !== nb.id || UI.ci.i !== i) checkinStart(nb, i);
+  if (UI.ci?.nb !== nb.id || UI.ci.i !== i) {
+    // only start a check-in that is actually due (not early, and never a third one)
+    if (!checkinsDue(nb).some((c) => c.i === i)) { el.innerHTML = `<div class="card empty"><h3>No check-in due here</h3><p class="muted">${(L.checkins || []).length >= CHECKIN_DAYS.length ? 'You’ve done both check-ins for this section.' : 'The next one opens a few days after the last.'}</p><a class="btn" href="#/nb/${nb.id}/recall">Go to Recall</a></div>`; return; }
+    checkinStart(nb, i);
+  }
   const C = UI.ci; const done = Object.keys(C.res).length; const all = done === C.items.length;
   const right = Object.values(C.res).reduce((a, v) => a + v, 0); const days = Math.max(1, Math.round((Date.now() - (L.doneAt || Date.now())) / DAY));
   const qHTML = C.items.map((x, k) => {
@@ -4038,7 +4107,7 @@ function renderProgress(nb, el) {
         ${rows.filter((x) => x.n).map((x) => `<div class="b"><span>${CONF[x.k]}</span><div class="meter"><i style="width:${pct(x.r)}%"></i></div><span class="small">${pct(x.r)}%</span><span class="small muted">${x.n}×</span></div>`).join('')}</div>`;
     })()}
     <div class="card bars"><h3>Concept mastery</h3><p class="small muted">Recent answers count most, and answers given a day or more later count most of all. It fades if you stop reviewing. Untested concepts count as 0%.</p>
-      ${cs.map(({ c, m, st }) => `<div class="b"><span><b>${esc(c.name)}</b><div class="small muted">${st ? `${st.attempts} attempt${st.attempts > 1 ? 's' : ''}` : 'not tested yet'}</div></span>
+      ${cs.map(({ c, m, st }) => `<div class="b"><span><b>${esc(c.name)}</b><div class="small muted">${st ? `${num(st.attempts)} attempt${st.attempts > 1 ? 's' : ''}` : 'not tested yet'}</div></span>
         <div class="meter"><i style="width:${pct(m ?? 0)}%;${m !== null && m < 0.4 ? 'background:var(--bad)' : ''}"></i></div><span class="small">${m === null ? '—' : pct(m) + '%'}</span>
         <a class="btn sm" href="#/nb/${nb.id}/recall/${c.id}">Drill</a></div>`).join('')}</div></div>`;
   $('#examDate')?.addEventListener('change', async (e) => { const v = e.target.value; if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return; if (v) nb.examDate = v; else delete nb.examDate; await save(nb); render(); });
@@ -4133,8 +4202,12 @@ function lbSync(now = false) {
     }).catch((e) => { if (now && !UI.lbWarned) { UI.lbWarned = true; toast(`Leaderboard didn’t update: ${e.message}`, 'err'); } });
   }, now ? 300 : 4000);
 }
-async function lbFetch(force) {
-  if (!force && UI.lb && Date.now() - UI.lb.at < 20000) return UI.lb.data;
+let LB_INFLIGHT = null;
+function lbFetch(force) {
+  if (!force && UI.lb && Date.now() - UI.lb.at < 20000) return Promise.resolve(UI.lb.data);
+  return (LB_INFLIGHT ||= lbFetch0().finally(() => { LB_INFLIGHT = null; })); // callers at the same moment share one request
+}
+async function lbFetch0() {
   const r = await fetch('/edge/lb', { headers: S.meta.lbId ? { 'x-lb-id': S.meta.lbId } : {}, cache: 'no-store' });
   if (!r.ok) throw new Error('leaderboard ' + r.status);
   const data = await r.json(); UI.lb = { at: Date.now(), data };
@@ -4635,20 +4708,25 @@ async function importData(e) {
         videos: Array.isArray(nb.videos) ? nb.videos : [], seenExamQs: Array.isArray(nb.seenExamQs) ? nb.seenExamQs : [], conceptStats: nb.conceptStats || {},
         pretest: nb.pretest || { done: false, answers: [] }, progress: nb.progress || { learn: false, reviews: 0 }, updated: Number(nb.updated) || 0 });
       for (const [k, v] of Object.entries(nb.illustrations)) if (!v || (v.kind !== 'svg' && !IMG_DATA.test(String(v.src || '')))) delete nb.illustrations[k];
-      nb.cards = nb.cards.filter((c) => c && c.question && c.srs);
+      nb.cards = nb.cards.filter((c) => c && c.question && c.srs && typeof c.srs === 'object');
+      for (const c of nb.cards) { c.question = String(c.question); c.answer = String(c.answer ?? ''); if (!Array.isArray(c.history)) c.history = []; }
+      for (const s of nb.sources) { s.name = String(s.name || 'Untitled'); s.text = String(s.text || ''); if (!KIND_ICON[s.kind]) s.kind = 'text'; s.images = num(s.images); }
+      for (const st of Object.values(nb.conceptStats)) if (st && typeof st === 'object') st.attempts = num(st.attempts);
+      if (nb.digest) { for (const c of nb.digest.cards) if (c && !Array.isArray(c.points)) c.points = []; }
     }
-    const ids = new Set(good.flatMap((nb) => nb.sources.map((s) => s.id)));
+    const ids = new Set(good.flatMap((nb) => nb.sources.map((s) => s.id))); const importVis = new Map();
     for (const v of data.visuals || []) {
       if (!v || !ids.has(v.id) || !Array.isArray(v.items)) continue;
-      v.items = v.items.filter((it) => it && IMG_DATA.test(String(it.src || '')));
-      await DB.put('visuals', v);
+      v.items = v.items.filter((it) => it && IMG_DATA.test(String(it.src || ''))).map((it) => ({ ...it, slide: num(it.slide), file: num(it.file) }));
+      importVis.set(v.id, v);
     }
     let kept = 0;
     for (const nb of good) {
       const i = S.notebooks.findIndex((n) => n.id === nb.id);
-      if (i >= 0 && (S.notebooks[i].updated || 0) > (nb.updated || 0)) { kept++; continue; } // this device has newer work: keep it
+      if (i >= 0 && (S.notebooks[i].updated || 0) > (nb.updated || 0)) { kept++; continue; } // this device has newer work: keep it (and its pictures)
       if (i >= 0) S.notebooks[i] = nb; else S.notebooks.push(nb);
       await DB.put('notebooks', nb);
+      for (const s of nb.sources) { const v = importVis.get(s.id); if (v) { await DB.put('visuals', v); VIS.delete(s.id); } }
     }
     const m = data.meta || {};
     if (Number.isFinite(+m.xp)) S.meta.xp = Math.max(S.meta.xp, Math.floor(+m.xp));
@@ -4675,7 +4753,7 @@ async function importData(e) {
 // ───────────────────────── boot ─────────────────────────
 (async function boot() {
   try {
-    const data = await DB.load();
+    const data = await DB.load(); UI.loadedAt = Date.now();
     S.notebooks = data.notebooks || [];
     if (data.meta) S.meta = { key: 'stats', xp: 0, days: {}, ...data.meta };
   } catch {
@@ -4692,13 +4770,20 @@ async function importData(e) {
   // Coming back to this tab: pick up anything changed on another device/tab (unless mid-session).
   document.addEventListener('visibilitychange', async () => {
     const busy = (m) => m && (typeof m !== 'object' || Object.values(m).some(Boolean));
-    if (document.hidden || UI.recall?.queue?.length > UI.recall?.i || UI.exam?.phase || UI.building || UI.chatBusy || UI.teachBusy
+    if (document.hidden || AI_RUNNING > 0 || UI.ingest?.some((x) => x.status === 'work') || UI.recall?.queue?.length > UI.recall?.i || UI.exam?.phase || UI.exam?.loading || UI.building || UI.chatBusy || UI.teachBusy
       || [UI.lessonBusy, UI.deepBusy, UI.testBusy, UI.teachBackBusy, UI.illBusy, UI.vidBusy, UI.lessonHelpBusy, UI.paraGrading].some(busy)) return;
     try {
       const data = await DB.load();
       const stamp = (list) => list.map((n) => n.id + n.updated).sort().join();
       if (stamp(data.notebooks) !== stamp(S.notebooks) || (data.meta?.xp ?? 0) !== S.meta.xp) {
-        S.notebooks = data.notebooks; if (data.meta) S.meta = { key: 'stats', ...data.meta }; render();
+        // take another tab's work only where it's newer than what this tab has (never throw away this tab's unsaved changes)
+        for (const n of data.notebooks) {
+          const k = S.notebooks.findIndex((m) => m.id === n.id);
+          if (k < 0) S.notebooks.push(n); else if ((n.updated || 0) > (S.notebooks[k].updated || 0)) S.notebooks[k] = n;
+        }
+        const ids = new Set(data.notebooks.map((n) => n.id)); S.notebooks = S.notebooks.filter((m) => ids.has(m.id) || (m.updated || 0) > (UI.loadedAt || 0)); // deleted in another tab
+        if (data.meta && (data.meta.xp ?? 0) >= (S.meta.xp ?? 0)) S.meta = { key: 'stats', ...data.meta };
+        UI.loadedAt = Date.now(); render();
       }
     } catch { /* offline: keep what we have */ }
   });
