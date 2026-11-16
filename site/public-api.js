@@ -250,10 +250,10 @@
       concepts: arr(obj({ id: S, name: S, definition: S, why_it_matters: S, source_ref: S, visual_hint: S, mnemonic: S, image_ids: SA })),
       cards: arr(obj({ title: S, emoji: S, concept_ids: SA, points: SA, analogy: S, source_ref: S, image_ids: SA })),
       concept_map: obj({ nodes: arr(obj({ id: S, label: S, group: S })), edges: arr(obj({ from: S, to: S, label: S })) }),
-      pretest: arr(obj({ question: S, answer: S, concept_id: S })),
-      recall: arr(obj({ question: S, answer: S, concept_id: S, kind: { type: 'string', enum: ['define', 'explain', 'compare', 'apply', 'sequence'] } })),
+      pretest: arr(obj({ question: S, answer: S, concept_id: S, quote: S })),
+      recall: arr(obj({ question: S, answer: S, concept_id: S, kind: { type: 'string', enum: ['define', 'explain', 'compare', 'apply', 'sequence'] }, quote: S })),
       feynman_prompts: arr(obj({ concept_id: S, prompt: S })),
-      picture_questions: arr(obj({ image_id: S, question: S, answer: S, concept_id: S })),
+      picture_questions: arr(obj({ image_id: S, question: S, answer: S, concept_id: S, quote: S })),
     }),
     grade: obj({ verdict: { type: 'string', enum: ['correct', 'partial', 'incorrect'] }, score: N, feedback: S, missing: SA }),
     feynman: obj({ score: N, verdict: { type: 'string', enum: ['mastered', 'solid', 'developing', 'needs_work'] }, nailed: SA, gaps: SA, misconceptions: SA, follow_up_question: S, better_analogy: S }),
@@ -289,7 +289,14 @@
     }),
     paragraph: obj({ score: N, verdict: { type: 'string', enum: ['correct', 'partial', 'incorrect'] }, covered: SA, missing: SA, misconceptions: SA, feedback: S }),
     videoPlan: obj({ searches: arr(obj({ query: S, concept_id: S, level: S, why: S, watch_for: SA })) }),
+    keyCheck: obj({ items: arr(obj({ n: N, pick: S, answerable: { type: 'boolean' }, another_defensible: { type: 'boolean' }, evidence: S })) }),
   };
+  // One shared accuracy rule for every task that writes study content (A4 in review_learning.md).
+  const FAITHFUL = `ACCURACY: stay faithful to the lecture material ("according to these slides"). Never invent numbers, normal
+values, doses, percentages, eponyms, laterality (left/right), origins/insertions, innervations or exceptions that the
+material does not state. If the material only names a term, explain it at a standard intro-A&P-textbook level and mark it
+as added/beyond wherever the output has such a field. If you are not sure a detail is true, leave it out. Simpler
+wording may leave out detail but must never state anything false.`;
   const TASK = {
     pic_vet: `A student is reading a lesson step and we found some pictures in an image library, listed by file name.
 For each step choose the ONE picture whose name says it shows that step's idea for this lesson's topic, so a student
@@ -440,7 +447,9 @@ lecture material. Never contradict the material. Don't cite slide or page number
   chain. mcq: exactly 4 options (≤14 words), plausible distractors, answer = exact text of the correct option.
   short: options = [], answer = the essential chain in ≤40 words. explanation ≤35 words (name the tempting wrong
   option by its wording, never "option B"). concept_id from the given ids. Never repeat the already-asked questions.
-- connections: 2–4 one-line links to other sections of this lecture or other body systems.`,
+- connections: 2–4 one-line links to other sections of this lecture or other body systems.
+Every layer, mistake or question whose content is not in the lecture material must set beyond: true.
+${FAITHFUL}`,
     taught_check: `A student has read ONLY the LESSON TEXT below (nothing else). For each numbered QUESTION, decide whether
 the lesson text gives them what they need to answer it: the fact, term, structure, number or idea it tests, and the
 correct answer, must be stated or clearly explained in the lesson text. Reasoning with taught ideas in a new situation
@@ -452,6 +461,15 @@ was covered. Some questions come with "[not in the lesson: …]": words from the
 the lesson text. Treat that as strong evidence: unless those words are just everyday wording or a plain synonym of
 something the lesson does say, the question is UNTAUGHT.
 Return the numbers of the UNTAUGHT questions (empty if every question was taught).`,
+    key_check: `You are a careful student taking a quiz. Answer each numbered QUESTION using ONLY the REFERENCE (the lesson text
+and/or the lecture material given). You are NOT given the answer key. Never use outside knowledge, even if you know it.
+Return one item per question, in order:
+- n: the question number.
+- pick: for mcq, the EXACT text of the option you choose; for short, the essential answer in ≤20 words. "" if you can't tell.
+- answerable: false if the reference doesn't clearly settle the answer.
+- another_defensible: true if a second option (mcq) or a clearly different answer (short) could also be defended from the
+  reference, e.g. the question is ambiguous or two options are both true.
+- evidence: up to 20 words copied EXACTLY, character for character, from the reference that settle your pick. "" if none.`,
     dedupe: `A student has already answered the ALREADY ASKED questions. For each CANDIDATE question, decide if it is a
 repeat: it tests the same fact or reasoning with the same expected answer, even if worded differently or in plain
 everyday words (e.g. "Why don't valves need muscles?" = "Why do valves work passively?"; "What happens to the blood in
@@ -469,7 +487,9 @@ bullets. Markdown is fine (bold, short lists).
 mode "simpler": re-explain the step as if to a smart 12-year-old, with a fresh everyday comparison.
 mode "example": give a different concrete example (clinical or everyday) that shows the idea in action.
 mode "question": answer their question using the lecture material; if it goes beyond the material, answer briefly
-from general knowledge and say so. Don't repeat earlier help word for word.`,
+from general knowledge and say so. Don't repeat earlier help word for word.
+In every mode, use the lecture material (when given) as the source of truth and don't add facts the step didn't teach.
+${FAITHFUL}`,
     digest: `Build a complete study kit from the lecture material. Requirements:
 - title: a short name for this lecture. overview: 2–3 sentences on the big picture.
 - concepts: the 8–20 most testable ideas, ids "c1", "c2", … in lecture order. definition: plain language, ≤35 words.
@@ -497,7 +517,11 @@ In A&P lectures the diagrams often ARE the content, so use what they show in con
 
 STUDY GUIDE: a source with kind="guide" is the student's study guide / exam objectives, which says what will be
 tested. Make sure every objective in it is covered by concepts and questions, and weight questions toward it.
-Don't turn the guide itself into a concept list; use the lecture material for the content.`,
+Don't turn the guide itself into a concept list; use the lecture material for the content.
+
+QUOTES: on every pretest, recall and picture question, quote = up to 20 words copied EXACTLY, character for character,
+from the material (or the text printed on that slide) that support the answer. Copy, never reword: the app checks it.
+${FAITHFUL}`,
     grade: `Grade the student's typed answer to a retrieval question. Judge meaning, not wording — accept synonyms,
 abbreviations and minor misspellings of terms. "correct" = all essential points; "partial" = some essential points or
 vague; "incorrect" = wrong or blank. score is 0–1. feedback: 1–2 encouraging, specific sentences (name what was right,
@@ -523,12 +547,16 @@ plausible distractors based on common confusions, answer = the exact text of the
 (type "short": options = []). About two thirds mcq. Interleave topics rather than grouping them. Include at least one
 application/clinical-scenario question. explanation: why the answer is right and why the tempting wrong choice is wrong.
 concept_id must be from the concept list given. Do not reuse the wording of the questions listed as already seen.
-If a source has kind="guide" (the student's study guide / exam objectives), weight the exam toward those objectives.`,
+If a source has kind="guide" (the student's study guide / exam objectives), weight the exam toward those objectives.
+Every correct answer must be settled by the lecture material, with exactly one defensible option.
+${FAITHFUL}`,
     svg: `Draw a clear, friendly educational illustration as a single self-contained SVG for a study app.
 Rules: root <svg> with viewBox="0 0 640 400" and xmlns; no width/height attributes; no <script>, no event handlers,
 no external references, no <image>, no foreignObject. Use a soft palette with a white background rect, rounded shapes,
 arrows (define markers in <defs>), and short readable labels (font-family Helvetica/Arial, ≥14px). Show the mechanism
-or structure, not decoration. Keep labels accurate to the lecture. caption: one sentence that explains the picture.`,
+or structure, not decoration. Keep labels accurate to the lecture. caption: one sentence that explains the picture.
+Only label parts the lecture names; if unsure of a label, leave it off.
+${FAITHFUL}`,
     transcribe: `The student uploaded study material as an image or scanned document. Transcribe all readable text
 faithfully (keep headings, bullet structure, and page/slide markers like [Page 2] when there are several pages). Then,
 for every diagram, chart, or figure, add a description in brackets: [Figure: what it shows, its labels, and the
@@ -539,7 +567,9 @@ relationships/arrows]. title: a short name for the material.`,
 - After explaining anything, end with ONE quick check-your-understanding question.
 - Keep replies short (under ~150 words), friendly, and in Markdown. Use analogies and step-by-step chains for mechanisms.
 - Only mention where something is in the lecture when it has real slide or page numbers, at most once per reply.
-- If they answer your question, tell them precisely what was right and what to fix, then go one level deeper.`,
+- If they answer your question, tell them precisely what was right and what to fix, then go one level deeper.
+- If something goes beyond the lecture, say so briefly ("beyond your slides: …").
+${FAITHFUL}`,
     videos: `You help a college student find YouTube videos that teach the topics of their lecture.
 For each topic, write the YouTube search that will surface a great teaching video. Rules:
 - query: 3–8 words, specific to the concept, and include a trusted channel name when one fits (for anatomy &
@@ -633,6 +663,12 @@ For each topic, write the YouTube search that will surface a great teaching vide
       const msg = `LESSON TEXT:\n${p.lesson || ''}\n\nQUESTIONS:\n${(p.candidates || []).map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
       return callJSON({ task: TASK.taught_check, parts: msg, schema: SCHEMA.taught, thinking: 2048, maxTokens: 6000 });
     },
+    // blind answer-key check: a different (lite) model answers from the reference alone; app.js compares with the key
+    key_check(p) {
+      const qs = (p.items || []).slice(0, 40).map((q, i) => `${i + 1}. [${q.options?.length ? 'mcq' : 'short'}] ${q.question}${q.options?.length ? `\n   Options: ${q.options.join(' | ')}` : ''}`).join('\n');
+      const msg = `${p.reference ? `REFERENCE (lesson text):\n${p.reference}\n\n` : ''}QUESTIONS:\n${qs}\n\nAnswer every question from the reference only.`;
+      return callJSON({ sources: p.sources?.length ? p.sources : null, task: TASK.key_check, parts: msg, schema: SCHEMA.keyCheck, thinking: 1024, maxTokens: 8000, wait: 90000, tier: 'lite' });
+    },
     open_questions(p) {
       const msg = (p.items || []).map((x, i) => `${i + 1}. ${x.question}\nOptions: ${(x.options || []).join(' | ')}\nCorrect: ${x.answer}`).join('\n\n');
       return callJSON({ task: TASK.open_questions, parts: msg, schema: SCHEMA.openQs, thinking: 0, maxTokens: 2000, tier: 'lite' });
@@ -653,7 +689,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
     lesson_help(p) {
       const earlier = (p.earlier || []).map((h) => `- (${h.mode}) ${h.a}`).join('\n');
       const msg = `Lesson section: ${p.title || ''}\nStep: ${p.step_title || ''}\nWhat the step taught:\n${p.explain || ''}\n${p.example ? `Its example: ${p.example}\n` : ''}Mode: ${p.mode}\n${p.question ? `Student's question: ${p.question}\n` : ''}${p.guess ? `Student's own guess at what the step means (react to it first in one short sentence: what's right, what's off): ${p.guess}\n` : ''}${earlier ? `Help already given on this step:\n${earlier}\n` : ''}`;
-      return callJSON({ sources: p.mode === 'question' ? p.sources : null, task: TASK.help, parts: msg, schema: SCHEMA.help, thinking: 0, maxTokens: 1200, tier: 'lite' });
+      return callJSON({ sources: p.sources, task: TASK.help, parts: msg, schema: SCHEMA.help, thinking: 512, maxTokens: 2000, tier: 'lite' }); // room for thinking + a short reply
     },
     async grade(p) {
       const msg = `Concept: ${p.concept || ''}\nQuestion: ${p.question || ''}\nModel answer: ${p.answer || ''}\nStudent answer:\n${fence(p.response)}`;
@@ -876,11 +912,16 @@ For each topic, write the YouTube search that will surface a great teaching vide
   };
 
   // Chrome/Edge: ask the browser to keep this site's saved notebooks (no prompt; just a request).
-  try { navigator.storage?.persist?.(); } catch { /* not supported */ }
+  // Remember the answer (null = unknown): Safari usually says no unless Etch is on the Home Screen, so the app can suggest that.
+  let persisted = null;
+  try {
+    const p = navigator.storage?.persist?.();
+    if (p?.then) p.then((ok) => { persisted = !!ok; }, () => { persisted = false; });
+  } catch { /* not supported */ }
 
   // Settings helpers app.js uses in the web version.
   window.EncodeWeb = {
-    attempts,
+    attempts, persisted: () => persisted,
     ownKey, setOwnKey: (k) => LS.set(KEY_LS, k), model: () => LS.get(MODEL_LS),
     async cleanTrash() { try { for (const t of await all('trash')) if (Date.now() - t.deleted > 30 * 86400000) await del('trash', t.id); } catch { /* ignore */ } },
   };

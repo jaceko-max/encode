@@ -55,10 +55,15 @@ async function allPlayers(store) {
 const addWeeks = (k, n) => new Date(Date.parse(k + 'T12:00:00Z') + n * 7 * 86400e3).toISOString().slice(0, 10);
 // a player's XP in week k: the current week, the one before it, or older weeks kept in hist
 const xpIn = (p, k) => num(p.weekKey === k ? p.weekXp : p.lastWeek?.key === k ? p.lastWeek.xp : p.hist?.[k]);
-function topFor(players, k) { // top 3 of week k; ties share a place (ties broken for order by all-time XP, then name)
+function topFor(players, k) { // places 1–3 of week k; ties share a place, so everyone tied for 3rd is kept
   const rows = players.map((p) => ({ name: p.name, xp: xpIn(p, k), h: p.h, total: p.total || 0 })).filter((p) => p.xp > 0)
-    .sort((a, b) => b.xp - a.xp || b.total - a.total || a.name.localeCompare(b.name)).slice(0, 3);
-  return rows.map((p) => ({ name: p.name, xp: p.xp, h: p.h, place: 1 + rows.filter((q) => q.xp > p.xp).length }));
+    .sort((a, b) => b.xp - a.xp || b.total - a.total || a.name.localeCompare(b.name));
+  return rows.map((p) => ({ name: p.name, xp: p.xp, h: p.h, place: 1 + rows.filter((q) => q.xp > p.xp).length })).filter((p) => p.place <= 3).slice(0, 6);
+}
+async function dropChampion(store, hashes) { // someone left (or the owner removed them): take them out of the Hall too
+  const meta = await store.get('meta', { type: 'json' }); if (!meta?.champions?.length) return;
+  const champions = meta.champions.map((c) => ({ ...c, top: c.top.filter((t) => !hashes.includes(t.h)) })).filter((c) => c.top.length);
+  if (champions.length !== meta.champions.length || champions.some((c, i) => c.top.length !== meta.champions[i]?.top.length)) await store.setJSON('meta', { ...meta, champions });
 }
 async function rollWeek(store, players, wk) { // close out every finished week since the last rollover: keep the top 3 as champions
   const stored = await store.get('meta', { type: 'json' });
@@ -92,7 +97,8 @@ export default async (request) => {
 
   if (request.method === 'GET') {
     const players = await allPlayers(store);
-    const meta = await rollWeek(store, players, wk);
+    // close a week a minute after the reset, so a score sent at 11:59:59 PM still counts for that week
+    const meta = await rollWeek(store, players, weekKey(new Date(now.getTime() - 60000)));
     const id = request.headers.get('x-lb-id') || '';
     const me = /^[a-f0-9]{32}$/.test(id) ? await sha(id) : '';
     const place = (t, i) => t.place || i + 1; // older champion entries have no stored place
@@ -151,11 +157,15 @@ export default async (request) => {
     if (body.name && admin && request.headers.get('x-admin-key') === admin) {
       const target = String(body.name).trim().toLowerCase();
       const players = await allPlayers(store); let removed = 0;
-      for (const p of players) if (p.name.toLowerCase() === target) { await store.delete('p/' + p.h); removed++; }
+      const gone = [];
+      for (const p of players) if (p.name.toLowerCase() === target) { await store.delete('p/' + p.h); gone.push(p.h); removed++; }
+      if (gone.length) await dropChampion(store, gone).catch(() => {});
       return json({ ok: true, removed });
     }
     if (!/^[a-f0-9]{32}$/.test(String(body.id || ''))) return json({ error: 'Bad id' }, 400);
-    await store.delete('p/' + (await sha(body.id)));
+    const h = await sha(body.id);
+    await store.delete('p/' + h);
+    await dropChampion(store, [h]).catch(() => {});
     return json({ ok: true });
   }
   return json({ error: 'Not found' }, 404);
