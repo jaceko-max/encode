@@ -4178,7 +4178,12 @@ ACT['cram-end'] = () => {
   const left = C.missed.filter((k) => (C.st[k]?.need || 0) > 0);
   modal(`<h2>⚡ Cram done</h2><p><b>${C.n}</b> answered · <b>${C.n ? Math.round((100 * C.right) / C.n) : 0}%</b> right · best streak <b>${C.best}</b> · <b>${C.fixed}</b> fixed</p>
     ${left.length ? `<p class="small muted">Still shaky (added to Recall for tomorrow):</p><ul>${left.map((k) => `<li>${esc(C.qs[k].question)}<div class="small muted">→ ${esc(C.qs[k].answer)}</div></li>`).join('')}</ul>` : '<p>Nothing left shaky. 🎉</p>'}
-    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="close-modal">Keep cramming</button><a class="btn primary" href="#/nb/${nb.id}/recall" data-act="close-modal">Done</a></div>`);
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="close-modal">Keep cramming</button><button class="btn primary" data-act="cram-done">Done</button></div>`);
+};
+// finish: close the summary, start fresh next time, and go to Recall (where the misses are waiting)
+ACT['cram-done'] = () => {
+  const nb = curNb(); clearTimeout(UI.cram?.timer); UI.cram = null; closeModal();
+  if (nb) go(`#/nb/${nb.id}/recall`);
 };
 document.addEventListener('keydown', (e) => {
   if (route().tab !== 'cram' || !UI.cram || e.target.closest?.('input, textarea, select') || !$('#modal').classList.contains('hidden')) return;
