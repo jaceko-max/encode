@@ -43,6 +43,8 @@ function cleanName(raw) {
   return { name: n };
 }
 const num = (x) => (Number.isFinite(+x) ? Math.max(0, Math.floor(+x)) : 0);
+// the title + nameplate a player shows on the board (ids only; the app checks they're really unlocked before showing them)
+const cosmetic = (x) => (/^[a-z]{2,12}$/.test(String(x || '')) ? String(x) : '');
 // new players per visitor: stops one person flooding the board with fake entries (per edge instance)
 const NEW_IDS = new Map();
 function tooManyNew(request) {
@@ -108,7 +110,7 @@ export default async (request) => {
     const id = request.headers.get('x-lb-id') || '';
     const me = /^[a-f0-9]{32}$/.test(id) ? await sha(id) : '';
     const place = (t, i) => t.place || i + 1; // older champion entries have no stored place
-    const row = (p, xp) => ({ name: p.name, xp, total: p.total, me: p.h === me, champ: (meta.champions || []).some((c) => c.top.some((t, i) => t.h === p.h && place(t, i) === 1)) });
+    const row = (p, xp) => ({ name: p.name, xp, total: p.total, title: p.title || '', plate: p.plate || '', me: p.h === me, champ: (meta.champions || []).some((c) => c.top.some((t, i) => t.h === p.h && place(t, i) === 1)) });
     const weekly = players.filter((p) => p.weekKey === wk && p.weekXp > 0).sort((a, b) => b.weekXp - a.weekXp).map((p) => row(p, p.weekXp));
     const allTime = players.sort((a, b) => b.total - a.total).map((p) => row(p, p.total));
     const myWins = me ? (meta.champions || []).flatMap((c) => c.top.map((t, i) => (t.h === me ? { week: c.week, place: place(t, i) } : null)).filter(Boolean)) : [];
@@ -126,7 +128,12 @@ export default async (request) => {
     const h = await sha(body.id); const key = 'p/' + h;
     const prev = await store.get(key, { type: 'json' });
     const t = now.getTime(); const today = nyDate(now);
-    if (prev && t - (prev.updated || 0) < MIN_GAP_MS) return json({ ok: true, throttled: true, retryIn: MIN_GAP_MS - (t - (prev.updated || 0)), total: prev.total, weekXp: prev.weekKey === wk ? prev.weekXp : 0 });
+    const title = cosmetic(body.title), plate = cosmetic(body.plate);
+    if (prev && t - (prev.updated || 0) < MIN_GAP_MS) {
+      // too soon for a score update, but a new title/nameplate (or name) is saved right away
+      if (prev.title !== title || prev.plate !== plate || prev.name !== nm.name) await store.setJSON(key, { ...prev, title, plate, name: nm.name });
+      return json({ ok: true, throttled: true, retryIn: MIN_GAP_MS - (t - (prev.updated || 0)), total: prev.total, weekXp: prev.weekKey === wk ? prev.weekXp : 0 });
+    }
     if (!prev && tooManyNew(request)) return json({ error: 'Too many new players from here. Try again later.' }, 429);
     // what the browser says it earned this week (each day capped) — only used as an upper bound
     let claimedWeek = 0;
@@ -152,7 +159,7 @@ export default async (request) => {
       hist = { ...hist, ...(prev.lastWeek?.key ? { [prev.lastWeek.key]: num(prev.lastWeek.xp) } : {}), [prev.weekKey]: num(prev.weekXp) };
       hist = Object.fromEntries(Object.entries(hist).filter(([k]) => k >= addWeeks(wk, -8) && k < wk));
     }
-    const rec = { name: nm.name, total, weekKey: wk, weekXp, dayXp, updated: t, created: prev?.created || t, hist,
+    const rec = { name: nm.name, title, plate, total, weekKey: wk, weekXp, dayXp, updated: t, created: prev?.created || t, hist,
       lastWeek: prev && prev.weekKey !== wk ? { key: prev.weekKey, xp: prev.weekXp } : prev?.lastWeek };
     await store.setJSON(key, rec);
     return json({ ok: true, total, weekXp, clamped: total < num(body.total) });

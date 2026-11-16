@@ -712,7 +712,7 @@ For each topic, write the YouTube search that will surface a great teaching vide
     exam(p) {
       const concepts = (p.concepts || []).map((c) => `${c.id}: ${c.name}`).join('\n');
       const seen = (p.seen || []).slice(0, 60).map((q) => `- ${q}`).join('\n');
-      const msg = `Write ${Math.round(p.count || 10)} questions.\nConcept list:\n${concepts}\nWeak concepts to emphasize (about half the questions): ${(p.weak || []).join(', ') || 'none yet'}\nAlready seen questions (avoid repeating):\n${seen || '- none'}`;
+      const msg = `Write ${Math.round(p.count || 10)} questions.${p.mcqOnly ? ' This is a multiple-choice drill: EVERY question must be type "mcq" with exactly 4 options (ignore the mix rule). Each one tests a single clear fact or idea from the material, with one unambiguous right answer.' : ''}\nConcept list:\n${concepts}\nWeak concepts to emphasize (about half the questions): ${(p.weak || []).join(', ') || 'none yet'}\nAlready seen questions (avoid repeating):\n${seen || '- none'}`;
       return callJSON({ sources: p.sources, task: TASK.exam, parts: msg, schema: SCHEMA.exam, thinking: 1024, maxTokens: 20000, wait: 150000 });
     },
     async svg(p) {

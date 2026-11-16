@@ -642,7 +642,7 @@ function renderPageInner() {
   if (r.view === 'nb') {
     const nb = getNb(r.id);
     if (!nb) return go('#/');
-    return renderNotebook(nb, TABS.some(([k]) => k === r.tab) || r.tab === 'checkin' || r.tab === 'deep' ? r.tab : nextStep(nb).tab, r.arg);
+    return renderNotebook(nb, TABS.some(([k]) => k === r.tab) || r.tab === 'checkin' || r.tab === 'deep' || r.tab === 'cram' ? r.tab : nextStep(nb).tab, r.arg);
   }
   if (r.view === 'course') return go('#/'); // mixed-course review was removed; old links go home
   if (r.view === 'profile') return renderProfile();
@@ -999,6 +999,7 @@ function renderHome() {
     </div>
   </section>
   ${backupNudgeHTML(nbs)}
+  ${cramNewsHTML(nbs)}
   ${nbs.length ? planCardHTML(nbs) : ''}
 
 
@@ -1028,6 +1029,18 @@ function backupNudgeHTML(nbs) {
   return `<div class="card backup-nudge row"><span aria-hidden="true">💾</span><span class="spacer small">Your notebooks live only in this browser. Clearing Safari data or not visiting for a while can erase them.${home}${last ? ` <span class="muted">Last backup: ${new Date(last).toLocaleDateString()}.</span>` : ''}</span>
     <button class="btn sm primary" data-act="export">⬇️ Export a backup</button><button class="btn sm ghost" data-act="backup-later" aria-label="Dismiss backup reminder">✕</button></div>`;
 }
+const cramIsNew = () => !S.meta.seenCram || Date.now() - S.meta.seenCram < 7 * DAY; // NEW badges stay a week after first look
+// Announces MCQ cram until it's been opened once (or dismissed).
+function cramNewsHTML(nbs) {
+  if (S.meta.seenCram) return '';
+  const nb = [...nbs].filter((n) => n.digest).sort((x, y) => (y.updated || 0) - (x.updated || 0))[0];
+  return `<section class="card cram-news"><div class="cram-news-ico" aria-hidden="true">⚡</div>
+    <div class="spacer stack" style="gap:4px"><div><span class="badge new-badge">NEW</span> <b>MCQ Cram mode</b></div>
+      <div class="small">Rapid-fire multiple choice that never runs out. Tap an answer, see right or wrong instantly, and it keeps going. Anything you miss comes back a few questions later until you nail it twice.</div></div>
+    <div class="row">${nb ? `<a class="btn primary" href="#/nb/${nb.id}/cram">Try it${nbs.filter((n) => n.digest).length > 1 ? `: ${esc(nb.title.slice(0, 24))}` : ''}</a>` : '<span class="small muted">Add a lecture to try it</span>'}
+      <button class="btn sm ghost" data-act="cram-news-off" aria-label="Dismiss">✕</button></div></section>`;
+}
+ACT['cram-news-off'] = async () => { S.meta.seenCram = Date.now(); await saveMeta(); render(); };
 ACT['backup-later'] = async () => { S.meta.backupNudgeOff = Date.now(); await saveMeta(); render(); };
 function nbCard(nb) {
   const due = dueCards(nb).length; const step = nextStep(nb);
@@ -1076,6 +1089,7 @@ const ICON_PATHS = {
   lessons: '<path d="M22 9 12 4 2 9l10 5 10-5z"/><path d="M6 11.5V16c3 2.2 9 2.2 12 0v-4.5M22 9v5"/>',
   learn: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   videos: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/>',
+  cram: '<path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/>',
   recall: '<path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
   teach: '<path d="M3 4h18M5 4v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4M12 16v4M8 20h8"/>',
   tutor: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/>',
@@ -1112,7 +1126,7 @@ function confetti() {
 
 // ═════════════════════════ NOTEBOOK SHELL ═════════════════════════
 const TABS = [
-  ['sources', '📄 Sources'], ['pretest', '🤔 Pretest'], ['lessons', '🎓 Learn'], ['learn', '🖼️ Revise'], ['videos', '🎬 Videos'], ['recall', '🧠 Recall'],
+  ['sources', '📄 Sources'], ['pretest', '🤔 Pretest'], ['lessons', '🎓 Learn'], ['learn', '🖼️ Revise'], ['videos', '🎬 Videos'], ['recall', '🧠 Recall'], ['cram', '⚡ Cram'],
   ['teach', '🗣️ Teach back'], ['tutor', '💬 Tutor'], ['exam', '📝 Exam'], ['progress', '📈 Progress'],
 ];
 function pathSteps(nb) {
@@ -1131,11 +1145,11 @@ function nextStep(nb) { return pathSteps(nb).find((s) => !s.done) || { tab: dueC
 // Tabs grouped into the order you study in: learn it → practice it → everything else
 const STAGES = [
   { k: 'learn', label: 'Learn', ico: 'lessons', tabs: ['pretest', 'lessons', 'learn', 'videos'], home: 'lessons' },
-  { k: 'practice', label: 'Practice', ico: 'recall', tabs: ['recall', 'teach', 'exam'], home: 'recall' },
+  { k: 'practice', label: 'Practice', ico: 'recall', tabs: ['recall', 'cram', 'teach', 'exam'], home: 'recall' },
   { k: 'more', label: 'More', ico: 'more', tabs: ['sources', 'tutor', 'progress'], home: 'sources' },
 ];
-const stageOf = (tab) => (tab === 'deep' ? STAGES[0] : tab === 'checkin' ? STAGES[1] : STAGES.find((s) => s.tabs.includes(tab)) || STAGES[2]);
-const KIT_TABS = ['pretest', 'lessons', 'deep', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress', 'checkin'];
+const stageOf = (tab) => (tab === 'deep' ? STAGES[0] : tab === 'checkin' || tab === 'cram' ? STAGES[1] : STAGES.find((s) => s.tabs.includes(tab)) || STAGES[2]);
+const KIT_TABS = ['cram', 'pretest', 'lessons', 'deep', 'learn', 'videos', 'recall', 'teach', 'exam', 'progress', 'checkin'];
 function renderNotebook(nb, tab, arg) {
   if (tab === 'learn' && nb.digest && !nb.progress.learn) { nb.progress.learn = true; save(nb); }
   const steps = pathSteps(nb); const next = nextStep(nb); const due = dueCards(nb).length;
@@ -1151,7 +1165,7 @@ function renderNotebook(nb, tab, arg) {
     <div class="tabs-bar">
       <div class="stage-row" role="tablist" aria-label="Study stage">${STAGES.map((sg, n) => { const on = stageOf(tab).k === sg.k; const target = sg.k === 'learn' && !sg.tabs.includes(next.tab) ? 'lessons' : sg.tabs.includes(next.tab) ? next.tab : sg.home;
         return `<a href="#/nb/${nb.id}/${on ? (['deep', 'checkin'].includes(tab) ? `${tab}/${encodeURIComponent(arg ?? '')}` : tab) : target}" class="stage ${on ? 'on' : ''}" role="tab" aria-selected="${on}"><span class="stage-n">${n < 2 ? n + 1 : ''}</span>${icon(sg.ico)}${sg.label}${sg.k === 'practice' && due ? `<span class="badge">${due}</span>` : ''}${!on && sg.tabs.includes(next.tab) ? '<span class="next-dot"></span>' : ''}</a>`; }).join('<span class="stage-arrow">→</span>')}</div>
-      <nav class="tabs">${TABS.filter(([k]) => stageOf(tab).tabs.includes(k)).sort((x, y) => stageOf(tab).tabs.indexOf(x[0]) - stageOf(tab).tabs.indexOf(y[0])).map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
+      <nav class="tabs">${TABS.filter(([k]) => stageOf(tab).tabs.includes(k)).sort((x, y) => stageOf(tab).tabs.indexOf(x[0]) - stageOf(tab).tabs.indexOf(y[0])).map(([k, l]) => `<a href="#/nb/${nb.id}/${k}" class="${k === tab ? 'on' : ''} ${!nb.digest && KIT_TABS.includes(k) ? 'needs-kit' : ''}" ${!nb.digest && KIT_TABS.includes(k) ? 'title="Build the study kit first"' : ''}>${icon(k)}<span>${l.replace(/^\S+\s/, '')}</span>${k === 'recall' && due ? `<span class="badge">${due}</span>` : ''}${k === 'cram' && cramIsNew() ? '<span class="badge new-badge">NEW</span>' : ''}${k === next.tab && k !== tab && !(k === 'recall' && due) ? `<span class="next-dot" title="Suggested next: ${esc(next.label)}"></span>` : ''}</a>`).join('')}</nav></div>
     <div id="tab"></div>`;
   const tabsEl = $('.tabs');
   if (tabsEl) {
@@ -1172,7 +1186,7 @@ function renderNotebook(nb, tab, arg) {
   const needsKit = KIT_TABS.includes(tab) && !nb.digest;
   const el = $('#tab');
   if (needsKit) return renderNeedKit(nb, el);
-  ({ sources: renderSources, pretest: renderPretest, lessons: renderLessons, deep: renderDeep, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress, checkin: renderCheckin }[tab] || renderSources)(nb, el, arg);
+  ({ sources: renderSources, pretest: renderPretest, lessons: renderLessons, deep: renderDeep, learn: renderLearn, videos: renderVideos, recall: renderRecall, teach: renderTeach, tutor: renderTutor, exam: renderExam, progress: renderProgress, checkin: renderCheckin, cram: renderCram }[tab] || renderSources)(nb, el, arg);
   if (tab === 'videos' && UI.vidFocus) {
     const id = UI.vidFocus; UI.vidFocus = null;
     const card = [...el.querySelectorAll('[data-vid]')].find((x) => x.dataset.vid === String(id));
@@ -3405,7 +3419,8 @@ function recallStart(nb, el, focus) {
       <div class="row">
         ${fc ? `<button class="btn primary lg" data-act="rc-start" data-mode="focus" data-focus="${fc.id}">Drill this concept</button>`
           : due.length ? `<button class="btn primary lg" data-act="rc-start" data-mode="due">Start review (${Math.min(due.length, 20)})</button>` : '<span class="tag good">Nothing due. Nice work!</span>'}
-        <button class="btn" data-act="rc-start" data-mode="cram" ${fc ? `data-focus="${fc.id}"` : ''}>Cram everything (ignore schedule)</button>
+        <a class="btn cram-btn" href="#/nb/${nb.id}/cram">⚡ MCQ cram${cramIsNew() ? ' <span class="badge new-badge">NEW</span>' : ''}</a>
+        <button class="btn" data-act="rc-start" data-mode="cram" ${fc ? `data-focus="${fc.id}"` : ''}>Cram all flashcards</button>
         <button class="btn" data-act="rc-start" data-mode="weak">Weakest concepts</button>
         ${pics ? '<button class="btn" data-act="rc-start" data-mode="pictures">🖼️ Picture questions</button>' : ''}
       </div>
@@ -4016,6 +4031,161 @@ function checkinStart(nb, i) {
   items.forEach((x) => { x.options &&= shuffle([...x.options]); x.cid = nb.digest.concepts.some((c) => c.id === x.cid) ? x.cid : itemConcept(nb, x.sec, { question: x.q, answer: x.a }); });
   UI.ci = { nb: nb.id, i, n: (lessonOf(nb, i).checkins || []).length, items, res: {}, pick: {}, typed: {}, shown: {} };
 }
+// ═════════════════════════ MCQ CRAM: multiple choice that keeps coming ═══════════════════════
+// Every multiple-choice question in the notebook (section tests, quick checks, earlier cram batches), one after another.
+// A miss comes back 3 questions later and has to be answered right twice in a row before it leaves the rotation;
+// it also becomes a Recall card for tomorrow. When fresh questions run low, the AI writes a new fact-checked batch
+// aimed at the concepts you're missing.
+const CRAM_GAP = [3, 8]; // a missed question returns after 3 questions, then (once right) after 8 more
+function cramPool(nb) {
+  const out = []; const seen = new Set();
+  const add = (q, from) => {
+    const opts = (q?.options || []).map(String).filter(Boolean);
+    if (!q?.question || opts.length < 2 || q.unchecked || !opts.includes(String(q.answer))) return;
+    const k = norm(q.question); if (seen.has(k)) return; seen.add(k);
+    out.push({ k, question: String(q.question), options: opts, answer: String(q.answer), explanation: String(q.explanation || ''), cid: q.concept_id || '', from });
+  };
+  for (const [i, L] of Object.entries(nb.lessons || {})) {
+    if (!L?.data) continue;
+    (L.data.steps || []).forEach((s) => { if (s.check?.type === 'mcq') add({ ...s.check, concept_id: s.check.concept_id || itemConcept(nb, +i, s.check) }, 'check'); });
+    (L.test?.mcq || []).forEach((q) => add({ ...q, concept_id: itemConcept(nb, +i, q) }, 'test'));
+  }
+  (nb.cramQs || []).forEach((q) => add(q, 'cram'));
+  return out;
+}
+const shuffled = (a) => { a = [...a]; for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; };
+function cramStart(nb) {
+  const pool = shuffled(cramPool(nb));
+  UI.cram = { nb: nb.id, queue: pool.map((q) => q.k), qs: Object.fromEntries(pool.map((q) => [q.k, q])), st: {}, cur: null, pick: null, opts: [],
+    n: 0, right: 0, streak: 0, best: 0, fixed: 0, missed: [], loading: false, err: '', asked: new Set() };
+  cramNext(nb);
+}
+function cramNext(nb) {
+  const C = UI.cram; C.pick = null; C.hold = false; clearTimeout(C.timer);
+  const k = C.queue.shift();
+  if (!k) { C.cur = null; cramTopUp(nb); return; }
+  C.cur = k; C.opts = shuffled(C.qs[k].options); C.asked.add(k);
+  if (C.queue.length + 1 < 6) cramTopUp(nb); // running low: fetch more in the background
+}
+// how many questions in the queue the student hasn't seen yet this session
+const cramFresh = (C) => C.queue.filter((k) => !C.asked.has(k)).length;
+async function cramTopUp(nb) {
+  const C = UI.cram; if (!C || C.loading || !aiOn() || !nb.digest) { if (C && !C.cur) cramRecycle(nb); return; }
+  C.loading = true; C.err = ''; if (!C.cur) cramDraw();
+  try {
+    // weakest first: concepts missed in this session, then low mastery
+    const missedC = [...new Set(C.missed.map((k) => C.qs[k]?.cid).filter(Boolean))];
+    const low = (nb.digest.concepts || []).map((c) => ({ c, m: mastery(nb, c.id) })).filter((x) => x.m !== null && x.m < 0.6).sort((x, y) => x.m - y.m).map((x) => x.c.id);
+    const weak = [...new Set([...missedC, ...low])].slice(0, 6).map((id) => conceptName(nb, id)).filter(Boolean);
+    const r = await ai('exam', { sources: aiSources(nb), count: 10, mcqOnly: true, weak,
+      concepts: (nb.digest.concepts || []).map((c) => ({ id: c.id, name: c.name })), seen: Object.values(C.qs).map((q) => q.question).slice(-60) });
+    let got = (r?.questions || []).filter((q) => q.type === 'mcq' && (q.options || []).length >= 3 && q.options.includes(q.answer));
+    got = got.filter((q) => !C.qs[norm(q.question)]);
+    // fact-check the answer key against the slides; drop anything that doesn't hold up
+    const kc = await keyCheck(nb, got, { slides: true });
+    if (kc?.drop?.size) got = got.filter((_, i) => !kc.drop.has(i));
+    for (const q of got) {
+      const item = { question: q.question, options: q.options, answer: q.answer, explanation: q.explanation || '', concept_id: q.concept_id || '' };
+      (nb.cramQs ||= []).push(item); const k = norm(q.question);
+      C.qs[k] = { k, question: item.question, options: item.options, answer: item.answer, explanation: item.explanation, cid: item.concept_id, from: 'cram' };
+      C.queue.splice(Math.min(C.queue.length, 1 + Math.floor(Math.random() * (C.queue.length + 1))), 0, k);
+    }
+    nb.cramQs = (nb.cramQs || []).slice(-300); await save(nb);
+    if (!got.length) C.err = 'The new batch didn’t pass the fact-check. Keep going with these; it’ll try again.';
+  } catch (e) { C.err = e?.message || 'Couldn’t get new questions.'; }
+  C.loading = false;
+  if (UI.cram === C && !C.cur) { if (C.queue.length) cramNext(nb); else cramRecycle(nb); }
+  if (UI.cram === C && route().tab === 'cram') cramDraw();
+}
+// nothing new left (or no AI): go round again, misses first
+function cramRecycle(nb) {
+  const C = UI.cram; if (!C || C.cur || C.queue.length) return;
+  const all = Object.keys(C.qs); if (!all.length) return;
+  const miss = all.filter((k) => C.missed.includes(k)); const rest = shuffled(all.filter((k) => !miss.includes(k)));
+  C.queue = [...shuffled(miss), ...rest]; C.asked = new Set(); cramNext(nb);
+}
+function cramAnswer(nb, pickText) {
+  const C = UI.cram; const q = C?.qs[C.cur]; if (!q || C.pick !== null) return;
+  C.pick = pickText; const ok = pickText === q.answer; C.n++;
+  const st = (C.st[q.k] ||= { wrong: 0, need: 0, first: null });
+  if (st.first === null) { st.first = ok; record(nb, q.cid, ok ? 1 : 0, 'other'); }
+  if (ok) {
+    C.right++; C.streak++; C.best = Math.max(C.best, C.streak);
+    if (st.need > 0) {
+      st.need--;
+      if (st.need > 0) C.queue.splice(CRAM_GAP[1], 0, q.k); // one more right answer to clear it
+      else C.fixed++;
+    }
+    const xp = xpGain(nb, `cram:${hk(q.k)}`, 2); if (xp) gainXP(xp, 'MCQ cram');
+  } else {
+    C.streak = 0; st.wrong++; st.need = 2;
+    if (!C.missed.includes(q.k)) {
+      C.missed.push(q.k);
+      missCard(nb, { q: `${q.question}\n\nChoices: ${q.options.join(' · ')}`, a: q.answer, orig: q.question, cid: q.cid, due: Date.now() + DAY, why: 'cram' });
+    }
+    C.queue = C.queue.filter((k) => k !== q.k); C.queue.splice(CRAM_GAP[0], 0, q.k);
+  }
+  save(nb);
+  // keep it moving: show right/wrong, then go on by itself. A miss stays up longer so there's time to read the answer.
+  const words = (q.explanation || '').split(/\s+/).length + (ok ? 0 : q.answer.split(/\s+/).length);
+  C.wait = ok ? 900 + Math.min(1600, words * 60) : Math.min(6000, 2200 + words * 120);
+  cramDraw(); cramTimer(nb);
+}
+function cramTimer(nb) {
+  const C = UI.cram; clearTimeout(C.timer); if (C.hold || C.pick === null) return;
+  const k = C.cur; C.timer = setTimeout(() => { if (UI.cram === C && C.cur === k && !C.hold && route().tab === 'cram') { cramNext(nb); cramDraw(); } }, C.wait);
+}
+function renderCram(nb, el) {
+  if (!S.meta.seenCram) { S.meta.seenCram = Date.now(); saveMeta(); }
+  if (UI.cram?.nb !== nb.id) cramStart(nb);
+  el.innerHTML = '<div id="cramBox" class="q-card stack"></div>';
+  cramDraw();
+}
+function cramDraw() {
+  const box = $('#cramBox'); const C = UI.cram; const nb = curNb(); if (!box || !C || !nb) return;
+  const pctRight = C.n ? Math.round((100 * C.right) / C.n) : 0;
+  const stats = `<div class="cram-stats"><span title="Streak">🔥 <b>${C.streak}</b></span><span><b>${C.n}</b> answered</span><span><b>${pctRight}%</b> right</span><span title="Missed, then got right twice">🛠️ <b>${C.fixed}</b> fixed</span>${C.missed.length - C.fixed > 0 ? `<span>🔁 <b>${C.missed.length - C.fixed}</b> coming back</span>` : ''}</div>`;
+  const q = C.qs[C.cur];
+  if (!q) {
+    box.innerHTML = `<div class="card overview"><h2>⚡ MCQ cram</h2>${stats}</div>
+      <div class="card empty">${C.loading ? '<div class="spinner lg" style="margin:0 auto"></div><p class="muted">Writing fresh questions from your lecture and fact-checking them…</p>'
+        : aiOn() ? `<p class="muted">${esc(C.err || 'No multiple-choice questions yet.')}</p><button class="btn primary" data-act="cram-more">Get questions</button>`
+          : '<p class="muted">No multiple-choice questions yet. Finish a section test, or turn on the AI in Settings so cram can write some for you.</p>'}</div>`;
+    return;
+  }
+  const st = C.st[q.k]; const ans = C.pick !== null; const ok = ans && C.pick === q.answer;
+  const again = st?.wrong && !ans ? `<span class="tag warn">🔁 Again: you missed this ${st.wrong === 1 ? 'earlier' : `${st.wrong} times`}</span>` : '';
+  box.innerHTML = `<div class="card overview"><div class="row between"><h2 style="margin:0">⚡ MCQ cram</h2><button class="btn sm ghost" data-act="cram-end">End</button></div>${stats}</div>
+    <div class="card stack cram-q">
+      <div class="row between small muted"><span>${esc(conceptName(nb, q.cid) || '')}</span>${again}</div>
+      <h3 style="margin:0">${esc(q.question)}</h3>
+      <div class="lesson-opts">${C.opts.map((o, n) => { const cls = ans ? (o === q.answer ? 'right' : o === C.pick ? 'wrong' : 'dim') : '';
+        return `<button class="opt ${cls}" data-act="cram-pick" data-o="${n}" ${ans ? 'disabled' : ''}><span class="opt-k">${'ABCD'[n] || n + 1}</span> ${esc(o)}</button>`; }).join('')}</div>
+      ${ans ? `<div class="verdict ${ok ? 'correct' : 'incorrect'}"><h3>${ok ? (st?.need === 1 ? '✓ Right! Once more and it’s fixed' : st?.need === 0 && st?.wrong ? '✓ Fixed 🛠️' : '✓ Right') : '✗ Not quite: it’ll come back in a few questions'}</h3>
+        ${!ok ? `<div class="small">Answer: <b>${esc(q.answer)}</b></div>` : ''}${q.explanation ? `<div class="small">${esc(q.explanation)}</div>` : ''}</div>
+        ${C.hold ? '<div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="cram-next">Next ›</button></div>'
+          : `<div class="cram-go" data-act="cram-next" title="Tap to go now"><i style="animation-duration:${C.wait}ms"></i></div>
+             <div class="row between small muted"><span>Next question coming… tap the bar to skip</span><button class="linklike" data-act="cram-hold">⏸ Hold</button></div>`}` : ''}
+      <div class="small muted">Tap an answer (or press 1–4 / A–D)${C.loading ? ' · <span class="spinner"></span> writing more questions' : ''}</div>
+    </div>`;
+}
+ACT['cram-pick'] = (el) => { const C = UI.cram; const nb = curNb(); if (!C || !nb) return; cramAnswer(nb, C.opts[+el.dataset.o]); };
+ACT['cram-next'] = () => { const nb = curNb(); const C = UI.cram; if (!C || !nb || C.pick === null) return; clearTimeout(C.timer); C.hold = false; cramNext(nb); cramDraw(); };
+ACT['cram-hold'] = () => { const C = UI.cram; if (!C) return; clearTimeout(C.timer); C.hold = true; cramDraw(); };
+ACT['cram-more'] = () => { const nb = curNb(); if (UI.cram && nb) cramTopUp(nb); };
+ACT['cram-end'] = () => {
+  const C = UI.cram; const nb = curNb(); if (!C || !nb) return;
+  const left = C.missed.filter((k) => (C.st[k]?.need || 0) > 0);
+  modal(`<h2>⚡ Cram done</h2><p><b>${C.n}</b> answered · <b>${C.n ? Math.round((100 * C.right) / C.n) : 0}%</b> right · best streak <b>${C.best}</b> · <b>${C.fixed}</b> fixed</p>
+    ${left.length ? `<p class="small muted">Still shaky (added to Recall for tomorrow):</p><ul>${left.map((k) => `<li>${esc(C.qs[k].question)}<div class="small muted">→ ${esc(C.qs[k].answer)}</div></li>`).join('')}</ul>` : '<p>Nothing left shaky. 🎉</p>'}
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="close-modal">Keep cramming</button><a class="btn primary" href="#/nb/${nb.id}/recall" data-act="close-modal">Done</a></div>`);
+};
+document.addEventListener('keydown', (e) => {
+  if (route().tab !== 'cram' || !UI.cram || e.target.closest?.('input, textarea, select') || !$('#modal').classList.contains('hidden')) return;
+  const C = UI.cram;
+  if (C.pick === null) { const n = '1234'.indexOf(e.key) >= 0 ? '1234'.indexOf(e.key) : 'abcd'.indexOf(e.key.toLowerCase()); if (n >= 0 && C.opts[n]) { e.preventDefault(); cramAnswer(curNb(), C.opts[n]); } }
+  else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ACT['cram-next'](); }
+});
 function renderCheckin(nb, el, arg) {
   if (arg === '' || arg === undefined || !Number.isInteger(+arg)) return go(`#/nb/${nb.id}/recall`);
   const i = +arg; const L = lessonOf(nb, i);
@@ -4173,6 +4343,7 @@ function profPick(kind, list, el) {
   if (!owned(item) && item.special) { toast('🔒 Finish a week at #1 on the leaderboard to unlock this'); return; }
   if (!owned(item)) { const need = TIERS[item.at].min - S.meta.xp; toast(`🔒 Unlocks at ${tierLabel(item.at)} (${need.toLocaleString()} XP to go)`); return; }
   prof()[kind] = item.id; saveMeta(); applyTheme(); render();
+  if (kind !== 'theme') lbSync(true); // show the new title / nameplate on the leaderboard
 }
 ACT['prof-theme'] = (el) => profPick('theme', THEMES, el);
 ACT['prof-title'] = (el) => profPick('title', TITLES, el);
@@ -4187,7 +4358,7 @@ function lbId() {
 }
 function lbDays() { const out = {}; for (let i = 0; i < 8; i++) { const d = new Date(); d.setDate(d.getDate() - i); const k = dayKey(d); if (S.meta.days[k]) out[k] = S.meta.days[k]; } return out; }
 async function lbPost() {
-  const r = await fetch('/edge/lb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: lbId(), name: prof().name, total: S.meta.xp, days: lbDays() }) });
+  const r = await fetch('/edge/lb', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: lbId(), name: prof().name, title: myTitle().id, plate: myPlate().id, total: S.meta.xp, days: lbDays() }) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `Leaderboard error ${r.status}`); UI.lb = null; return j;
 }
 let lbTimer = null;
@@ -4237,11 +4408,17 @@ function fmtUntil(iso) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 }
 const MEDAL = ['🥇', '🥈', '🥉'];
+// a player's title + nameplate, shown only if their XP (or a weekly win) really unlocks it
+function lbLook(r) {
+  const ok = (item) => item && (item.special ? !!r.champ : tierAt(r.total || 0) >= item.at);
+  const title = TITLES.find((x) => x.id === r.title); const plate = PLATES.find((x) => x.id === r.plate);
+  return { title: ok(title) ? title : null, plate: ok(plate) && plate.id !== 'basic' ? plate : null };
+}
 function lbRows(rows, empty) {
-  return rows.length ? rows.map((r, i) => `<div class="lb-row ${r.me ? 'me' : ''} ${i < 3 ? 'top' : ''}">
+  return rows.length ? rows.map((r, i) => { const { title, plate } = lbLook(r); return `<div class="lb-row ${r.me ? 'me' : ''} ${i < 3 ? 'top' : ''} ${plate ? `plate plate-${plate.style}` : ''}"${plate ? ` style="--pc:${plateColor(plate)}"` : ''}>
       <span class="lb-place">${MEDAL[i] || `#${i + 1}`}</span>${emblem(tierAt(r.total), 24)}
-      <span class="lb-name">${esc(r.name)}${r.champ ? ' <span title="Weekly champion">👑</span>' : ''}${r.me ? ' <span class="tag accent">you</span>' : ''}</span>
-      <b class="lb-xp">${r.xp.toLocaleString()}<span> XP</span></b>${route().admin ? `<button class="btn sm ghost lb-x" data-act="lb-admin-del" data-n="${esc(r.name)}" aria-label="Remove ${esc(r.name)}">✕</button>` : ''}</div>`).join('') : `<p class="muted" style="margin:0">${empty}</p>`;
+      <span class="lb-who"><span class="lb-name">${esc(r.name)}${r.champ ? ' <span title="Weekly champion">👑</span>' : ''}${r.me ? ' <span class="tag accent">you</span>' : ''}</span>${title ? `<span class="lb-title">${title.special ? '👑 ' : ''}${esc(title.name)}</span>` : ''}</span>
+      <b class="lb-xp">${r.xp.toLocaleString()}<span> XP</span></b>${route().admin ? `<button class="btn sm ghost lb-x" data-act="lb-admin-del" data-n="${esc(r.name)}" aria-label="Remove ${esc(r.name)}">✕</button>` : ''}</div>`; }).join('') : `<p class="muted" style="margin:0">${empty}</p>`;
 }
 function renderLeaderboard() {
   $('#view').innerHTML = `<a href="#/" class="small">← Home</a><div id="lbBox" style="margin-top:10px"><div class="card building"><div class="spinner lg" style="margin:0 auto"></div><p class="muted">Loading the leaderboard…</p></div></div>`;

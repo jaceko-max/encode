@@ -716,8 +716,13 @@ input[type=search] { -webkit-appearance: none; appearance: none; }
 .lb-tabs { align-self: flex-start; }
 .lb-list { display: grid; gap: 6px; }
 .lb-row { display: grid; grid-template-columns: 40px 26px 1fr auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid transparent; }
-.lb-row.top { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); }
-.lb-row.me { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.lb-row.top:not(.plate) { background: color-mix(in srgb, var(--accent) 7%, var(--surface-2)); }
+.lb-row.me:not(.plate) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+/* a player's nameplate as their row; "you" gets an outline so it doesn't hide the nameplate's border */
+.lb-row.plate.me { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lb-row.plate:not(.plate-gold)::after { display: none; } /* no shine sweep on every row: only the champion's gold plate moves */
+.lb-who { display: grid; gap: 1px; min-width: 0; }
+.lb-title { font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--pc, var(--accent)) 75%, var(--text)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-place { font: 700 1.05rem "Chakra Petch", var(--font); text-align: center; color: var(--muted); }
 .lb-row.top .lb-place { font-size: 1.35rem; }
 .lb-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1100,3 +1105,23 @@ html.modal-open { overflow: hidden; }
 .step-src.src-miss { color: var(--warn); }
 .concept figcaption .ai-note { display: block; margin-top: 2px; color: #777; font-size: .75rem; }
 .ai-note { margin-top: 4px; }
+
+/* MCQ cram */
+.cram-stats { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: .9rem; color: var(--muted, #8a94a6); }
+.cram-stats b { color: var(--text); }
+.cram-q .opt { color: var(--text); }
+.cram-q .opt.dim { opacity: .55; }
+.cram-q .opt:disabled { cursor: default; }
+.opt-k { flex: none; width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; font-size: .78rem; font-weight: 700; background: color-mix(in srgb, var(--text) 10%, transparent); }
+
+.new-badge { background: linear-gradient(90deg, #f5c542, #ff7a59); color: #1a0d00; font-weight: 800; letter-spacing: .04em; }
+.tabs a .new-badge { margin-left: 4px; }
+.cram-news { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border: 1px solid transparent;
+  background: linear-gradient(160deg, rgba(245, 197, 66, .12), var(--surface) 55%) padding-box, linear-gradient(120deg, #f5c542, #ff7a59, #4f7dff) border-box; }
+.cram-news-ico { font-size: 2rem; line-height: 1; filter: drop-shadow(0 0 10px rgba(245, 197, 66, .6)); }
+.cram-news .spacer { flex: 1 1 260px; }
+.cram-btn { border-color: #f5c542; }
+.cram-go { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--text) 10%, transparent); overflow: hidden; cursor: pointer; margin-top: 2px; }
+.cram-go i { display: block; height: 100%; width: 100%; transform-origin: 0 50%; background: var(--grad, linear-gradient(90deg, #4f7dff, #3dd6f5)); animation: cram-count linear forwards; }
+@keyframes cram-count { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .cram-go i { animation: none; transform: scaleX(1); opacity: .5; } }
