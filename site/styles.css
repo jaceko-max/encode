@@ -1125,3 +1125,5 @@ html.modal-open { overflow: hidden; }
 .cram-go i { display: block; height: 100%; width: 100%; transform-origin: 0 50%; background: var(--grad, linear-gradient(90deg, #4f7dff, #3dd6f5)); animation: cram-count linear forwards; }
 @keyframes cram-count { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @media (prefers-reduced-motion: reduce) { .cram-go i { animation: none; transform: scaleX(1); opacity: .5; } }
+
+.lb-title.lb-rank { color: var(--muted, #8a94a6); font-weight: 600; }

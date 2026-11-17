@@ -4128,7 +4128,7 @@ function cramAnswer(nb, pickText) {
   save(nb);
   // keep it moving: show right/wrong, then go on by itself. A miss stays up longer so there's time to read the answer.
   const words = (q.explanation || '').split(/\s+/).length + (ok ? 0 : q.answer.split(/\s+/).length);
-  C.wait = ok ? 900 + Math.min(1600, words * 60) : Math.min(6000, 2200 + words * 120);
+  C.wait = ok ? 5000 : Math.min(8000, Math.max(5000, 2500 + words * 120));
   cramDraw(); cramTimer(nb);
 }
 function cramTimer(nb) {
@@ -4165,8 +4165,8 @@ function cramDraw() {
         ${!ok ? `<div class="small">Answer: <b>${esc(q.answer)}</b></div>` : ''}${q.explanation ? `<div class="small">${esc(q.explanation)}</div>` : ''}</div>
         ${C.hold ? '<div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="cram-next">Next ›</button></div>'
           : `<div class="cram-go" data-act="cram-next" title="Tap to go now"><i style="animation-duration:${C.wait}ms"></i></div>
-             <div class="row between small muted"><span>Next question coming… tap the bar to skip</span><button class="linklike" data-act="cram-hold">⏸ Hold</button></div>`}` : ''}
-      <div class="small muted">Tap an answer (or press 1–4 / A–D)${C.loading ? ' · <span class="spinner"></span> writing more questions' : ''}</div>
+             <div class="row between small muted"><span>Next question in ${Math.round(C.wait / 1000)} s</span><span class="row" style="gap:8px"><button class="btn sm ghost" data-act="cram-hold">⏸ Hold</button><button class="btn sm primary" data-act="cram-next" id="cramSkip">Skip ›</button></span></div>`}` : ''}
+      <div class="small muted">${ans ? 'Enter or Space skips' : 'Tap an answer (or press 1–4 / A–D)'}${C.loading ? ' · <span class="spinner"></span> writing more questions' : ''}</div>
     </div>`;
 }
 ACT['cram-pick'] = (el) => { const C = UI.cram; const nb = curNb(); if (!C || !nb) return; cramAnswer(nb, C.opts[+el.dataset.o]); };
@@ -4422,7 +4422,7 @@ function lbLook(r) {
 function lbRows(rows, empty) {
   return rows.length ? rows.map((r, i) => { const { title, plate } = lbLook(r); return `<div class="lb-row ${r.me ? 'me' : ''} ${i < 3 ? 'top' : ''} ${plate ? `plate plate-${plate.style}` : ''}"${plate ? ` style="--pc:${plateColor(plate)}"` : ''}>
       <span class="lb-place">${MEDAL[i] || `#${i + 1}`}</span>${emblem(tierAt(r.total), 24)}
-      <span class="lb-who"><span class="lb-name">${esc(r.name)}${r.champ ? ' <span title="Weekly champion">👑</span>' : ''}${r.me ? ' <span class="tag accent">you</span>' : ''}</span>${title ? `<span class="lb-title">${title.special ? '👑 ' : ''}${esc(title.name)}</span>` : ''}</span>
+      <span class="lb-who"><span class="lb-name">${esc(r.name)}${r.champ ? ' <span title="Weekly champion">👑</span>' : ''}${r.me ? ' <span class="tag accent">you</span>' : ''}</span>${title ? `<span class="lb-title">${title.special ? '👑 ' : ''}${esc(title.name)}</span>` : `<span class="lb-title lb-rank">${esc(tierLabel(tierAt(r.total || 0)))}</span>`}</span>
       <b class="lb-xp">${r.xp.toLocaleString()}<span> XP</span></b>${route().admin ? `<button class="btn sm ghost lb-x" data-act="lb-admin-del" data-n="${esc(r.name)}" aria-label="Remove ${esc(r.name)}">✕</button>` : ''}</div>`; }).join('') : `<p class="muted" style="margin:0">${empty}</p>`;
 }
 function renderLeaderboard() {
